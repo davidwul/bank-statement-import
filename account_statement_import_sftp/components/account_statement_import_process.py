@@ -9,7 +9,7 @@ from odoo.addons.component.core import Component
 class EdiBankStatementImportProcess(Component):
     _name = "edi.input.process.bank.statement.import"
     _usage = "input.process"
-    _backend_type = "bk_sftp"
+    _backend_type = "bk_sftp_imp"
     _inherit = "edi.component.input.mixin"
 
     def process(self):
