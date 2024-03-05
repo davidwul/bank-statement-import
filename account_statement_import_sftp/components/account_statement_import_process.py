@@ -13,6 +13,8 @@ class EdiBankStatementImportProcess(Component):
     _inherit = "edi.component.input.mixin"
 
     def process(self):
+        ICP = self.env["ir.config_parameter"]
+        auto_post = ICP.sudo().get_param("import_statement_edi_auto_post")
         statement_import = self.env["account.statement.import"].create(
             [
                 {
@@ -27,3 +29,5 @@ class EdiBankStatementImportProcess(Component):
         statement = self.env["account.bank.statement"].browse(action.get("res_id"))
         if not (statement.state and statement.state in ["posted", "open"]):
             raise ValueError(_("The bank statement could not be validated."))
+        if auto_post:
+            statement.button_post()
