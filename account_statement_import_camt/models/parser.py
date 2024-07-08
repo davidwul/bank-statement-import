@@ -33,6 +33,7 @@ class CamtParser(models.AbstractModel):
             amount = sign * float(amount_node[0].text)
         return amount
 
+
     def add_value_from_node(self, ns, node, xpath_str, obj, attr_name, join_str=None):
         """Add value to object from first or all nodes found with xpath.
 
@@ -297,6 +298,10 @@ class CamtParser(models.AbstractModel):
         amount = self.parse_amount(ns, node)
         if amount != 0.0:
             transaction["amount"] = amount
+        # if amount_currency and currency:
+        #     transaction["currency"] = currency
+        #     transaction["amount_currency"] = amount_currency
+
         self.add_value_from_node(
             ns,
             node,
