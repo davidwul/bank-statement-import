@@ -108,6 +108,16 @@ class CamtParser(models.AbstractModel):
         )
         return True
 
+    def parse_amount_details(self,ns,node,transaction):
+        re_camt_version = re.compile(
+            r"(^urn:iso:std:iso:20022:tech:xsd:camt.054."
+            r"|^ISO:camt.054.)"
+        )
+        if re_camt_version.search(ns):
+            #camt54 use amounts only from txdtls
+            transaction['amount'] = self.parse_amount(ns,node)
+        super().parse_amount_details(ns,node,transaction)
+
     def parse_statement(self, ns, node):
         """In case of a camt54 file, the QR-IBAN to be used as the account_number
         is found in another place than the IBAN."""
