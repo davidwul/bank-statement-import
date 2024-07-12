@@ -1,8 +1,9 @@
 # Copyright 2019 Camptocamp SA
 # License AGPL-3.0 or later (http://www.gnu.org/licenses/agpl).
 
-from odoo import _, exceptions, models
 import re
+
+from odoo import _, exceptions, models
 
 
 class CamtParser(models.AbstractModel):
@@ -58,19 +59,17 @@ class CamtParser(models.AbstractModel):
         isr_number = node.xpath(
             "./ns:RmtInf/ns:Strd/ns:CdtrRefInf/ns:Ref", namespaces={"ns": ns}
         )
-        is_pmdd = node.xpath(
-            "./ns:BkTxCd/ns:Fmly/ns:SubFmlyCd", namespaces={"ns": ns}
-        )
+        is_pmdd = node.xpath("./ns:BkTxCd/ns:Fmly/ns:SubFmlyCd", namespaces={"ns": ns})
         if len(isr_number):
             transaction["payment_ref"] = isr_number[0].text
             partner_ref = self._get_partner_ref(isr_number[0].text)
             if partner_ref:
                 transaction["partner_ref"] = partner_ref
-        elif is_pmdd == 'PMDD':
-            #use EndToEndId if direct debit camt054
+        elif is_pmdd == "PMDD":
+            # use EndToEndId if direct debit camt054
             transaction["payment_ref"] = node.xpath(
                 "./ns:Refs/ns:EndToEndId",
-                )[0].text
+            )[0].text
         else:
             xpath_exprs = [
                 "./ns:RmtInf/ns:Ustrd|./ns:RtrInf/ns:AddtlInf",
@@ -108,23 +107,21 @@ class CamtParser(models.AbstractModel):
         )
         return True
 
-    def parse_amount_details(self,ns,node,transaction):
+    def parse_amount_details(self, ns, node, transaction):
         re_camt_version = re.compile(
-            r"(^urn:iso:std:iso:20022:tech:xsd:camt.054."
-            r"|^ISO:camt.054.)"
+            r"(^urn:iso:std:iso:20022:tech:xsd:camt.054." r"|^ISO:camt.054.)"
         )
         if re_camt_version.search(ns):
-            #camt54 use amounts only from txdtls
-            transaction['amount'] = self.parse_amount(ns,node)
-        super().parse_amount_details(ns,node,transaction)
+            # camt54 use amounts only from txdtls
+            transaction["amount"] = self.parse_amount(ns, node)
+        super().parse_amount_details(ns, node, transaction)
 
     def parse_statement(self, ns, node):
         """In case of a camt54 file, the QR-IBAN to be used as the account_number
         is found in another place than the IBAN."""
         result = super().parse_statement(ns, node)
         re_camt_version = re.compile(
-            r"(^urn:iso:std:iso:20022:tech:xsd:camt.054."
-            r"|^ISO:camt.054.)"
+            r"(^urn:iso:std:iso:20022:tech:xsd:camt.054." r"|^ISO:camt.054.)"
         )
         if re_camt_version.search(ns):
             self.add_value_from_node(

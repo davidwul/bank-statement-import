@@ -33,7 +33,6 @@ class CamtParser(models.AbstractModel):
             amount = sign * float(amount_node[0].text)
         return amount
 
-
     def add_value_from_node(self, ns, node, xpath_str, obj, attr_name, join_str=None):
         """Add value to object from first or all nodes found with xpath.
 
@@ -189,7 +188,7 @@ class CamtParser(models.AbstractModel):
             transaction,
             "ref",
         )
-        self.parse_amount_details(ns, node,transaction)
+        self.parse_amount_details(ns, node, transaction)
 
         # remote party values
         ultmtdbtr = node.xpath("./ns:RltdPties/ns:UltmtDbtr", namespaces={"ns": ns})
@@ -255,14 +254,20 @@ class CamtParser(models.AbstractModel):
                     "account_number",
                 )
 
-    def parse_amount_details(self,ns,node,transaction):
-        amount = self.parse_amount(ns,node)
+    def parse_amount_details(self, ns, node, transaction):
+        amount = self.parse_amount(ns, node)
         if amount != 0.0:
             if transaction["amount"] != 0 and transaction["amount"] != amount:
                 # Probably currencies in this transaction
                 ntry_dtls_currency = node.xpath("ns:Amt/@Ccy", namespaces={"ns": ns})[0]
-                ntry_currency = node.xpath("../../ns:Amt/@Ccy", namespaces={"ns": ns})[0]
-                if ntry_currency and ntry_dtls_currency and ntry_currency != ntry_dtls_currency:
+                ntry_currency = node.xpath("../../ns:Amt/@Ccy", namespaces={"ns": ns})[
+                    0
+                ]
+                if (
+                    ntry_currency
+                    and ntry_dtls_currency
+                    and ntry_currency != ntry_dtls_currency
+                ):
                     other_currency = self.env["res.currency"].search(
                         [("name", "=", ntry_dtls_currency)], limit=1
                     )
@@ -323,7 +328,6 @@ class CamtParser(models.AbstractModel):
             transaction,
             "payment_ref",
         )
-
 
         # enrich the notes with some more infos when they are available
         self.add_value_from_node(
