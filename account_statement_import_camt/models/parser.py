@@ -188,20 +188,8 @@ class CamtParser(models.AbstractModel):
             transaction,
             "ref",
         )
-        amount = self.parse_amount(ns, node)
-        if amount != 0.0:
-            if transaction["amount"] != 0 and transaction["amount"] != amount:
-                # Probably currencies in this transaction
-                ntry_dtls_currency = node.xpath("ns:Amt/@Ccy", namespaces={"ns": ns})[0]
-                ntry_currency = node.xpath("../../ns:Amt/@Ccy", namespaces={"ns": ns})[0]
-                if ntry_currency and ntry_dtls_currency and  ntry_currency != ntry_dtls_currency:
-                    other_currency = self.env["res.currency"].search(
-                        [("name", "=", ntry_dtls_currency)], limit=1
-                    )
-                    transaction["amount_currency"] = amount
-                    transaction["foreign_currency_id"] = other_currency.id
-            else:
-                transaction["amount"] = amount
+        self.parse_amount_details(ns, node, transaction)
+
         # remote party values
         ultmtdbtr = node.xpath("./ns:RltdPties/ns:UltmtDbtr", namespaces={"ns": ns})
         if ultmtdbtr:
@@ -266,6 +254,28 @@ class CamtParser(models.AbstractModel):
                     "account_number",
                 )
 
+    def parse_amount_details(self, ns, node, transaction):
+        amount = self.parse_amount(ns, node)
+        if amount != 0.0:
+            if transaction["amount"] != 0 and transaction["amount"] != amount:
+                # Probably currencies in this transaction
+                ntry_dtls_currency = node.xpath("ns:Amt/@Ccy", namespaces={"ns": ns})[0]
+                ntry_currency = node.xpath("../../ns:Amt/@Ccy", namespaces={"ns": ns})[
+                    0
+                ]
+                if (
+                    ntry_currency
+                    and ntry_dtls_currency
+                    and ntry_currency != ntry_dtls_currency
+                ):
+                    other_currency = self.env["res.currency"].search(
+                        [("name", "=", ntry_dtls_currency)], limit=1
+                    )
+                    transaction["amount_currency"] = amount
+                    transaction["foreign_currency_id"] = other_currency.id
+            else:
+                transaction["amount"] = amount
+
     def generate_narration(self, transaction):
         # this block ensure compatibility with v13
         transaction["narration"] = {
@@ -318,7 +328,6 @@ class CamtParser(models.AbstractModel):
             transaction,
             "payment_ref",
         )
-
 
         # enrich the notes with some more infos when they are available
         self.add_value_from_node(
