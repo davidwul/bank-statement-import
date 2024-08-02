@@ -259,7 +259,7 @@ class CamtParser(models.AbstractModel):
         amount = self.parse_amount(ns,node)
         if amount != 0.0:
             if transaction["amount"] != 0 and transaction["amount"] != amount:
-                # Probably currencies in this transaction
+                # Probably currencies in this transaction,
                 ntry_dtls_currency = node.xpath("ns:Amt/@Ccy", namespaces={"ns": ns})[0]
                 ntry_currency = node.xpath("../../ns:Amt/@Ccy", namespaces={"ns": ns})[0]
                 if ntry_currency and ntry_dtls_currency and ntry_currency != ntry_dtls_currency:
@@ -268,6 +268,12 @@ class CamtParser(models.AbstractModel):
                     )
                     transaction["amount_currency"] = amount
                     transaction["foreign_currency_id"] = other_currency.id
+                    nboftxs = int(node.xpath("../ns:Btch/ns:NbOfTxs", namespaces={"ns": ns})[0].text)
+                    if nboftxs > 1:
+                        xchgrate = float(node.xpath("../../ns:AmtDtls/ns:TxAmt/ns:CcyXchg/ns:XchgRate", namespaces={"ns": ns})[0].text)
+                        transaction["amount"] = amount*xchgrate
+                else:
+                    transaction["amount"] = amount
             else:
                 transaction["amount"] = amount
 
