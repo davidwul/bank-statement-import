@@ -43,9 +43,10 @@ class AccountStatementImport(models.TransientModel):
             for line_vals in st_vals["transactions"]:
                 if "partner_ref" in line_vals:
                     partner_ref = line_vals.pop("partner_ref")
-                    partner = self.env["res.partner"].search(
-                        [("ref", "=", partner_ref)], limit=1
-                    )
-                    line_vals["partner_id"] = partner.id
+                    if not "partner_id" in line_vals:
+                        partner = self.env["res.partner"].search(
+                            [("ref", "=", partner_ref)], limit=1
+                        )
+                        line_vals["partner_id"] = partner.id
 
         return stmts_vals
