@@ -372,6 +372,23 @@ class CamtParser(models.AbstractModel):
             transaction["transaction_type"],
             "SubFmlyCd",
         )
+
+        # Enrich entry with charges if available
+        self.add_value_from_node(
+            ns,
+            node,
+            "./ns:Chrgs/ns:TtlChrgsAndTaxAmt",
+            transaction,
+            "charges",
+        )
+        self.add_value_from_node(
+            ns,
+            node,
+            "./ns:Chrgs/ns:Rcrd/ns:ChrgInclInd",
+            transaction,
+            "charges_incl",
+        )
+
         transaction["transaction_type"] = (
             "-".join(transaction["transaction_type"].values()) or ""
         )
