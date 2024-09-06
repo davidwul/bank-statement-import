@@ -282,6 +282,8 @@ class CamtParser(models.AbstractModel):
                             transaction["amount"] = amount - float(transaction["charges"])
                         else:
                             transaction["amount"] = amount
+                else:
+                    transaction["amount"] = amount
             else:
                 transaction["amount"] = amount
 
