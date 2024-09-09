@@ -278,7 +278,7 @@ class CamtParser(models.AbstractModel):
                         xchgrate = float(node.xpath("../../ns:AmtDtls/ns:TxAmt/ns:CcyXchg/ns:XchgRate", namespaces={"ns": ns})[0].text)
                         transaction["amount"] = amount*xchgrate
                     else:
-                        if transaction["charges_incl"] == "true":
+                        if "charges_incl" in transaction and transaction["charges_incl"] == "true":
                             transaction["amount"] = amount - float(transaction["charges"])
                         else:
                             transaction["amount"] = amount
