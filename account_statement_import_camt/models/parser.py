@@ -188,7 +188,7 @@ class CamtParser(models.AbstractModel):
             transaction,
             "ref",
         )
-        #check if there are currency details
+        # check if there are currency details
         self.parse_amount_details(ns, node, transaction)
 
         # remote party values
@@ -259,13 +259,17 @@ class CamtParser(models.AbstractModel):
         # search for currency information in the txdtls
         add_currency = False
         ntry_dtls_currency = node.xpath("ns:Amt/@Ccy", namespaces={"ns": ns})
-        if (ntry_dtls_currency and transaction["currency"] != ntry_dtls_currency[0]):
+        if ntry_dtls_currency and transaction["currency"] != ntry_dtls_currency[0]:
             currency_amount = node.xpath("ns:Amt", namespaces={"ns": ns})[0].text
-            add_currency=True
+            add_currency = True
         else:
-            ntry_dtls_currency = node.xpath("ns:AmtDtls/ns:InstdAmt/ns:Amt/@Ccy", namespaces={"ns": ns})
-            if (ntry_dtls_currency and transaction["currency"] != ntry_dtls_currency[0]):
-                currency_amount = node.xpath("ns:AmtDtls/ns:InstdAmt/ns:Amt", namespaces={"ns": ns})[0].text
+            ntry_dtls_currency = node.xpath(
+                "ns:AmtDtls/ns:InstdAmt/ns:Amt/@Ccy", namespaces={"ns": ns}
+            )
+            if ntry_dtls_currency and transaction["currency"] != ntry_dtls_currency[0]:
+                currency_amount = node.xpath(
+                    "ns:AmtDtls/ns:InstdAmt/ns:Amt", namespaces={"ns": ns}
+                )[0].text
                 add_currency = True
         if add_currency:
             other_currency = self.env["res.currency"].search(
