@@ -188,6 +188,7 @@ class CamtParser(models.AbstractModel):
             transaction,
             "ref",
         )
+        # check if there are currency details
         self.parse_amount_details(ns, node, transaction)
 
         # remote party values
@@ -255,38 +256,27 @@ class CamtParser(models.AbstractModel):
                 )
 
     def parse_amount_details(self, ns, node, transaction):
-        amount = self.parse_amount(ns, node)
-        if amount != 0.0:
-            if transaction["amount"] != 0 and transaction["amount"] != amount:
-                # Probably currencies in this transaction,
-                ntry_dtls_currency = node.xpath("ns:Amt/@Ccy", namespaces={"ns": ns})[0]
-                ntry_currency = (
-                    node.xpath("../../ns:Amt/@Ccy", namespaces={"ns": ns})[0]
-                    or node.xpath("../ns:Amt/@Ccy", namespaces={"ns": ns})[0]
-                )
-                if (
-                    ntry_currency
-                    and ntry_dtls_currency
-                    and ntry_currency != ntry_dtls_currency
-                ):
-                    other_currency = self.env["res.currency"].search(
-                        [("name", "=", ntry_dtls_currency)], limit=1
-                    )
-                    transaction["amount_currency"] = amount
-                    transaction["foreign_currency_id"] = other_currency.id
-                    nboftxs = int(node.xpath("../ns:Btch/ns:NbOfTxs", namespaces={"ns": ns})[0].text)
-                    if nboftxs > 1:
-                        xchgrate = float(node.xpath("../../ns:AmtDtls/ns:TxAmt/ns:CcyXchg/ns:XchgRate", namespaces={"ns": ns})[0].text)
-                        transaction["amount"] = amount*xchgrate
-                    else:
-                        if "charges_incl" in transaction and transaction["charges_incl"] == "true":
-                            transaction["amount"] = amount - float(transaction["charges"])
-                        else:
-                            transaction["amount"] = amount
-                else:
-                    transaction["amount"] = amount
-            else:
-                transaction["amount"] = amount
+        # search for currency information in the txdtls
+        add_currency = False
+        ntry_dtls_currency = node.xpath("ns:Amt/@Ccy", namespaces={"ns": ns})
+        if ntry_dtls_currency and transaction["currency"] != ntry_dtls_currency[0]:
+            currency_amount = node.xpath("ns:Amt", namespaces={"ns": ns})[0].text
+            add_currency = True
+        else:
+            ntry_dtls_currency = node.xpath(
+                "ns:AmtDtls/ns:InstdAmt/ns:Amt/@Ccy", namespaces={"ns": ns}
+            )
+            if ntry_dtls_currency and transaction["currency"] != ntry_dtls_currency[0]:
+                currency_amount = node.xpath(
+                    "ns:AmtDtls/ns:InstdAmt/ns:Amt", namespaces={"ns": ns}
+                )[0].text
+                add_currency = True
+        if add_currency:
+            other_currency = self.env["res.currency"].search(
+                [("name", "=", ntry_dtls_currency)], limit=1
+            )
+            transaction["amount_currency"] = currency_amount
+            transaction["foreign_currency_id"] = other_currency.id
 
     def generate_narration(self, transaction):
         # this block ensure compatibility with v13
@@ -316,9 +306,36 @@ class CamtParser(models.AbstractModel):
             "transaction_type": {},
         }  # fallback defaults
         self.add_value_from_node(ns, node, "./ns:BookgDt/ns:Dt", transaction, "date")
+        self.add_value_from_node(
+            ns,
+            node,
+            [
+                "./ns:Amt/@Ccy",
+                "./ns:AmtDtls/ns:TxAmt/ns:Amt/@Ccy",
+            ],
+            transaction,
+            "currency",
+        )
+        # Enrich entry with charges if available
+        self.add_value_from_node(
+            ns,
+            node,
+            "./ns:Chrgs/ns:TtlChrgsAndTaxAmt",
+            transaction,
+            "charges",
+        )
+        self.add_value_from_node(
+            ns,
+            node,
+            "./ns:Chrgs/ns:Rcrd/ns:ChrgInclInd",
+            transaction,
+            "charges_incl",
+        )
         amount = self.parse_amount(ns, node)
+
         if amount != 0.0:
             transaction["amount"] = amount
+
         self.add_value_from_node(
             ns,
             node,
@@ -379,28 +396,13 @@ class CamtParser(models.AbstractModel):
             "SubFmlyCd",
         )
 
-        # Enrich entry with charges if available
-        self.add_value_from_node(
-            ns,
-            node,
-            "./ns:Chrgs/ns:TtlChrgsAndTaxAmt",
-            transaction,
-            "charges",
-        )
-        self.add_value_from_node(
-            ns,
-            node,
-            "./ns:Chrgs/ns:Rcrd/ns:ChrgInclInd",
-            transaction,
-            "charges_incl",
-        )
-
         transaction["transaction_type"] = (
             "-".join(transaction["transaction_type"].values()) or ""
         )
 
         details_nodes = node.xpath("./ns:NtryDtls/ns:TxDtls", namespaces={"ns": ns})
         if len(details_nodes) == 0:
+            transaction.pop("currency")
             self.generate_narration(transaction)
             yield transaction
             return
@@ -408,6 +410,7 @@ class CamtParser(models.AbstractModel):
         for node in details_nodes:
             transaction = transaction_base.copy()
             self.parse_transaction_details(ns, node, transaction)
+            transaction.pop("currency")
             self.generate_narration(transaction)
             yield transaction
 
