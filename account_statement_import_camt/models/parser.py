@@ -189,8 +189,10 @@ class CamtParser(models.AbstractModel):
             "ref",
         )
         # check if there are currency details
-        self.parse_amount_details(ns, node, transaction)
-
+        if  not self.parse_amount_details_currency(ns, node, transaction):
+            amount = self.parse_amount(ns, node)
+            if amount != 0.0:
+                transaction["amount"] = amount
         # remote party values
         ultmtdbtr = node.xpath("./ns:RltdPties/ns:UltmtDbtr", namespaces={"ns": ns})
         if ultmtdbtr:
@@ -255,7 +257,7 @@ class CamtParser(models.AbstractModel):
                     "account_number",
                 )
 
-    def parse_amount_details(self, ns, node, transaction):
+    def parse_amount_details_currency(self, ns, node, transaction):
         # search for currency information in the txdtls
         add_currency = False
         ntry_dtls_currency = node.xpath("ns:Amt/@Ccy", namespaces={"ns": ns})
@@ -277,6 +279,7 @@ class CamtParser(models.AbstractModel):
             )
             transaction["amount_currency"] = currency_amount
             transaction["foreign_currency_id"] = other_currency.id
+        return add_currency
 
     def generate_narration(self, transaction):
         # this block ensure compatibility with v13
@@ -315,21 +318,6 @@ class CamtParser(models.AbstractModel):
             ],
             transaction,
             "currency",
-        )
-        # Enrich entry with charges if available
-        self.add_value_from_node(
-            ns,
-            node,
-            "./ns:Chrgs/ns:TtlChrgsAndTaxAmt",
-            transaction,
-            "charges",
-        )
-        self.add_value_from_node(
-            ns,
-            node,
-            "./ns:Chrgs/ns:Rcrd/ns:ChrgInclInd",
-            transaction,
-            "charges_incl",
         )
         amount = self.parse_amount(ns, node)
 
@@ -401,6 +389,9 @@ class CamtParser(models.AbstractModel):
         )
 
         details_nodes = node.xpath("./ns:NtryDtls/ns:TxDtls", namespaces={"ns": ns})
+        chrg_inc = node.xpath("./ns:Chrgs/ns:Rcrd/ns:ChrgInclInd", namespaces={"ns": ns})
+        if chrg_inc and chrg_inc[0].text == "true":
+            details_nodes += node.xpath("./ns:Chrgs/ns:Rcrd", namespaces={"ns": ns})
         if len(details_nodes) == 0:
             transaction.pop("currency")
             self.generate_narration(transaction)

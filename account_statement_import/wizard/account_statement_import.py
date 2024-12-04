@@ -318,20 +318,6 @@ class AccountStatementImport(models.TransientModel):
                     st_lines_to_create.append(lvals)
 
             if len(st_lines_to_create) > 0:
-
-                for line in st_lines_to_create:
-                    if line.get("charges_incl"):
-                        if line.get("charges_incl") == "true":
-                            charges = float(line.get("charges"))
-                            line["amount"] += charges
-                            charge_incl_line = line.copy()
-                            charge_incl_line["amount"] = -charges
-                            st_lines_to_create.append(charge_incl_line)
-                            charge_incl_line.pop("charges_incl")
-                            charge_incl_line.pop("charges")
-                        line.pop("charges_incl")
-                        line.pop("charges")
-
                 if not st_lines_to_create[0].get("sequence"):
                     for seq, vals in enumerate(st_lines_to_create, start=1):
                         vals["sequence"] = seq
