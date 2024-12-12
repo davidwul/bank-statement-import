@@ -262,22 +262,23 @@ class CamtParser(models.AbstractModel):
         add_currency = False
         ntry_dtls_currency = node.xpath("ns:Amt/@Ccy", namespaces={"ns": ns})
         if ntry_dtls_currency and transaction["currency"] != ntry_dtls_currency[0]:
-            currency_amount = node.xpath("ns:Amt", namespaces={"ns": ns})[0].text
+            currency_amount = float(node.xpath("ns:Amt", namespaces={"ns": ns})[0].text)
             add_currency = True
         else:
             ntry_dtls_currency = node.xpath(
                 "ns:AmtDtls/ns:InstdAmt/ns:Amt/@Ccy", namespaces={"ns": ns}
             )
             if ntry_dtls_currency and transaction["currency"] != ntry_dtls_currency[0]:
-                currency_amount = node.xpath(
+                currency_amount = float(node.xpath(
                     "ns:AmtDtls/ns:InstdAmt/ns:Amt", namespaces={"ns": ns}
-                )[0].text
+                )[0].text)
                 add_currency = True
         if add_currency:
             other_currency = self.env["res.currency"].search(
                 [("name", "=", ntry_dtls_currency)], limit=1
             )
-            transaction["amount_currency"] = currency_amount
+            transaction["amount_currency"] = currency_amount \
+                if transaction["amount"]>0 else -currency_amount
             transaction["foreign_currency_id"] = other_currency.id
         return add_currency
 
