@@ -1,39 +1,35 @@
 # Translation of Odoo Server.
 # This file contains the translation of the following modules:
-# * account_bank_statement_import_move_line
+# 	* account_statement_import_move_line
 #
-# Translators:
-# OCA Transbot <transbot@odoo-community.org>, 2017
 msgid ""
 msgstr ""
-"Project-Id-Version: Odoo Server 10.0\n"
+"Project-Id-Version: Odoo Server 14.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2017-08-11 02:41+0000\n"
-"PO-Revision-Date: 2025-09-15 11:45+0000\n"
-"Last-Translator: Douglas Custódio <douglascstd@yahoo.com>\n"
-"Language-Team: Portuguese (Brazil) (https://www.transifex.com/oca/teams/"
-"23907/pt_BR/)\n"
-"Language: pt_BR\n"
+"PO-Revision-Date: 2025-05-29 16:26+0000\n"
+"Last-Translator: mymage <stefano.consolaro@mymage.it>\n"
+"Language-Team: none\n"
+"Language: it\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: \n"
-"Plural-Forms: nplurals=2; plural=n > 1;\n"
+"Plural-Forms: nplurals=2; plural=n != 1;\n"
 "X-Generator: Weblate 5.10.4\n"
 
 #. module: account_statement_import_move_line
 #: model_terms:ir.ui.view,arch_db:account_statement_import_move_line.account_statement_line_create_view_form
 msgid "Add All Move Lines"
-msgstr "Adicionar todas as linhas de movimento"
+msgstr ""
 
 #. module: account_statement_import_move_line
 #: model:ir.model.fields.selection,name:account_statement_import_move_line.selection__account_statement_line_create__target_move__all
 msgid "All Entries"
-msgstr "Todas as Entradas"
+msgstr ""
 
 #. module: account_statement_import_move_line
 #: model:ir.model.fields.selection,name:account_statement_import_move_line.selection__account_statement_line_create__target_move__posted
 msgid "All Posted Entries"
-msgstr "Todas as entradas Lançadas"
+msgstr ""
 
 #. module: account_statement_import_move_line
 #: model:ir.model.fields,field_description:account_statement_import_move_line.field_account_statement_line_create__allow_blocked
@@ -43,78 +39,73 @@ msgstr ""
 #. module: account_statement_import_move_line
 #: model:ir.model.fields,field_description:account_statement_import_move_line.field_account_statement_line_create__statement_id
 msgid "Bank Statement"
-msgstr "Extrato bancário"
+msgstr ""
 
 #. module: account_statement_import_move_line
 #: model_terms:ir.ui.view,arch_db:account_statement_import_move_line.account_statement_line_create_view_form
 msgid "Cancel"
-msgstr "Cancelar"
+msgstr ""
 
 #. module: account_statement_import_move_line
 #: model_terms:ir.ui.view,arch_db:account_statement_import_move_line.account_statement_line_create_view_form
 msgid "Choose Move Lines Filter Options"
-msgstr "Escolha opções de filtro das linhas de movimento"
+msgstr ""
 
 #. module: account_statement_import_move_line
 #: model_terms:ir.ui.view,arch_db:account_statement_import_move_line.account_statement_line_create_view_form
 msgid ""
-"Click on Add All Move Lines to auto-select the move lines matching the above "
-"criteria or click on Add an item to manually select the move lines filtered "
-"by the above criteria."
+"Click on Add All Move Lines to auto-select the move lines matching the above"
+" criteria or click on Add an item to manually select the move lines filtered"
+" by the above criteria."
 msgstr ""
-"Clique em Adicionar todas as linhas de movimento para selecionar "
-"automaticamente as linhas de movimento correspondentes aos critérios acima "
-"ou clique em Adicionar um item para selecionar manualmente as linhas de "
-"movimento filtradas pelos critérios acima."
 
 #. module: account_statement_import_move_line
 #: model:ir.actions.act_window,name:account_statement_import_move_line.account_statement_line_create_action
 msgid "Create Lines from Move Lines"
-msgstr "Criar linhas a partir de linhas de movimento"
+msgstr ""
 
 #. module: account_statement_import_move_line
 #: model_terms:ir.ui.view,arch_db:account_statement_import_move_line.account_statement_line_create_view_form
-#, fuzzy
 msgid "Create Statement Lines"
-msgstr "Criar Linhas de Declaração"
+msgstr ""
 
 #. module: account_statement_import_move_line
 #: model:ir.model.fields,field_description:account_statement_import_move_line.field_account_statement_line_create__create_uid
 msgid "Created by"
-msgstr "Criado por"
+msgstr ""
 
 #. module: account_statement_import_move_line
 #: model:ir.model.fields,field_description:account_statement_import_move_line.field_account_statement_line_create__create_date
 msgid "Created on"
-msgstr "Criado em"
+msgstr ""
 
 #. module: account_statement_import_move_line
 #: model:ir.model.fields,field_description:account_statement_import_move_line.field_account_move_line__display_name
 #: model:ir.model.fields,field_description:account_statement_import_move_line.field_account_statement_line_create__display_name
 msgid "Display Name"
-msgstr "Nome exibido"
+msgstr "Nome visualizzato"
 
 #. module: account_statement_import_move_line
 #: model:ir.model.fields,field_description:account_statement_import_move_line.field_account_statement_line_create__due_date
 #: model:ir.model.fields.selection,name:account_statement_import_move_line.selection__account_statement_line_create__date_type__due
 msgid "Due Date"
-msgstr "Data Vencimento"
+msgstr ""
 
 #. module: account_statement_import_move_line
 #: model:ir.model.fields,field_description:account_statement_import_move_line.field_account_move_line__id
 #: model:ir.model.fields,field_description:account_statement_import_move_line.field_account_statement_line_create__id
 msgid "ID"
-msgstr ""
+msgstr "ID"
 
 #. module: account_statement_import_move_line
 #: model_terms:ir.ui.view,arch_db:account_statement_import_move_line.view_bank_statement_form
 msgid "Import Journal Items"
-msgstr "Importar Itens Diário"
+msgstr ""
 
 #. module: account_statement_import_move_line
 #: model:ir.model,name:account_statement_import_move_line.model_account_move_line
 msgid "Journal Item"
-msgstr "Item Diário"
+msgstr ""
 
 #. module: account_statement_import_move_line
 #: model:ir.model.fields,field_description:account_statement_import_move_line.field_account_statement_line_create__journal_ids
@@ -124,50 +115,50 @@ msgstr ""
 #. module: account_statement_import_move_line
 #: model_terms:ir.ui.view,arch_db:account_statement_import_move_line.account_statement_line_create_view_form
 msgid "Keep empty for using all journals"
-msgstr "Mantenha vazio para usar todos os diários"
+msgstr ""
 
 #. module: account_statement_import_move_line
 #: model:ir.model.fields,field_description:account_statement_import_move_line.field_account_move_line____last_update
 #: model:ir.model.fields,field_description:account_statement_import_move_line.field_account_statement_line_create____last_update
 msgid "Last Modified on"
-msgstr "Última modificação"
+msgstr "Ultima modifica il"
 
 #. module: account_statement_import_move_line
 #: model:ir.model.fields,field_description:account_statement_import_move_line.field_account_statement_line_create__write_uid
 msgid "Last Updated by"
-msgstr "Última atualização por"
+msgstr ""
 
 #. module: account_statement_import_move_line
 #: model:ir.model.fields,field_description:account_statement_import_move_line.field_account_statement_line_create__write_date
 msgid "Last Updated on"
-msgstr "Última atualização em"
+msgstr ""
 
 #. module: account_statement_import_move_line
 #: model:ir.model.fields,field_description:account_statement_import_move_line.field_account_statement_line_create__invoice
 msgid "Linked to an Invoice or Refund"
-msgstr "Vinculado a uma fatura ou reembolso"
+msgstr ""
 
 #. module: account_statement_import_move_line
 #: model:ir.model.fields,field_description:account_statement_import_move_line.field_account_statement_line_create__move_date
 #: model:ir.model.fields.selection,name:account_statement_import_move_line.selection__account_statement_line_create__date_type__move
 msgid "Move Date"
-msgstr "Data Movimento"
+msgstr ""
 
 #. module: account_statement_import_move_line
 #: model:ir.model.fields,field_description:account_statement_import_move_line.field_account_statement_line_create__move_line_ids
 msgid "Move Lines"
-msgstr "Linhas Movimento"
+msgstr ""
 
 #. module: account_statement_import_move_line
 #: model:ir.model.fields,field_description:account_statement_import_move_line.field_account_statement_line_create__partner_id
 msgid "Partner Related"
-msgstr "Parceiro Relacionado"
+msgstr ""
 
 #. module: account_statement_import_move_line
 #: code:addons/account_statement_import_move_line/wizards/account_statement_line_create.py:0
 #, python-format
 msgid "Select Move Lines to Create Statement"
-msgstr "Selecione Linhas do Movimento para criar o Extrato"
+msgstr ""
 
 #. module: account_statement_import_move_line
 #: model_terms:ir.ui.view,arch_db:account_statement_import_move_line.account_statement_line_create_view_form
@@ -187,9 +178,9 @@ msgstr ""
 #. module: account_statement_import_move_line
 #: model:ir.model.fields,field_description:account_statement_import_move_line.field_account_statement_line_create__date_type
 msgid "Type of Date Filter"
-msgstr "Tipo de filtro de Data"
+msgstr ""
 
 #. module: account_statement_import_move_line
 #: model:ir.model,name:account_statement_import_move_line.model_account_statement_line_create
 msgid "Wizard to create statement lines"
-msgstr "Assistente para criar linhas de extrato"
+msgstr ""
