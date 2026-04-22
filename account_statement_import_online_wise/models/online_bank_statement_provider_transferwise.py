@@ -24,7 +24,7 @@ from odoo.exceptions import UserError
 _logger = logging.getLogger(__name__)
 
 
-TRANSFERWISE_API_BASE = "https://api.transferwise.com"
+TRANSFERWISE_API_BASE = "https://api.wise.com"
 
 
 class OnlineBankStatementProviderTransferwise(models.Model):
