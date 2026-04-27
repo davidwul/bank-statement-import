@@ -22,7 +22,6 @@ class CamtParser(models.AbstractModel):
             sign_node = node.xpath("../../ns:CdtDbtInd", namespaces={"ns": ns})
         if sign_node and sign_node[0].text == "DBIT":
             sign = -1
-        # Extract only direct Amt child to avoid global/batch amount confusion
         amount_node = node.xpath("ns:Amt", namespaces={"ns": ns})
         if amount_node:
             return sign * float(amount_node[0].text)
@@ -33,20 +32,14 @@ class CamtParser(models.AbstractModel):
         add_currency = False
         ntry_dtls_currency = None
         currency_amount = 0.0
-        # 1. Target Currency case (e.g. card fees)
-        trgt_ccy = node.xpath(
-            ".//ns:CcyXchg/ns:TrgtCcy", namespaces={"ns": ns}
-        )
+        trgt_ccy = node.xpath(".//ns:CcyXchg/ns:TrgtCcy", namespaces={"ns": ns})
         if trgt_ccy and transaction.get("currency") != trgt_ccy[0].text:
-            rate = node.xpath(
-                ".//ns:CcyXchg/ns:XchgRate", namespaces={"ns": ns}
-            )
+            rate = node.xpath(".//ns:CcyXchg/ns:XchgRate", namespaces={"ns": ns})
             amt_main = node.xpath("ns:Amt", namespaces={"ns": ns})
             if rate and amt_main:
                 ntry_dtls_currency = trgt_ccy[0].text
                 currency_amount = float(amt_main[0].text) * float(rate[0].text)
                 add_currency = True
-        # 2. Explicit foreign currency case (e.g. SEPA EUR)
         if not add_currency:
             ccy_nodes = node.xpath(".//ns:AmtDtls//@Ccy", namespaces={"ns": ns})
             for ccy in ccy_nodes:
@@ -60,7 +53,6 @@ class CamtParser(models.AbstractModel):
                         currency_amount = float(val_node[0].text)
                         add_currency = True
                         break
-        # 3. Apply to transaction sign and ID
         if add_currency and ntry_dtls_currency:
             other_currency = self.env["res.currency"].search(
                 [("name", "=", ntry_dtls_currency)], limit=1
@@ -87,9 +79,7 @@ class CamtParser(models.AbstractModel):
             ns, node, ["./ns:Amt/@Ccy", "./ns:AmtDtls/ns:TxAmt/ns:Amt/@Ccy"],
             transaction_base, "currency"
         )
-
         entry_amount = self.parse_amount(ns, node)
-
         self.add_value_from_node(
             ns, node,
             ["./ns:NtryDtls/ns:RmtInf/ns:Strd/ns:CdtrRefInf/ns:Ref",
@@ -108,7 +98,6 @@ class CamtParser(models.AbstractModel):
             ns, node, "./ns:RvslInd", transaction_base["narration"],
             "%s (RvslInd)" % _("Reversal Indicator")
         )
-
         for code_path, key in [("./ns:BkTxCd/ns:Domn/ns:Cd", "Code"),
                                ("./ns:BkTxCd/ns:Domn/ns:Fmly/ns:Cd", "FmlyCd"),
                                ("./ns:BkTxCd/ns:Domn/ns:Fmly/ns:SubFmlyCd",
@@ -173,30 +162,16 @@ class CamtParser(models.AbstractModel):
                 break
 
     def parse_transaction_details(self, ns, node, transaction):
-        """Parse TxDtls node."""
         self.add_value_from_node(
             ns, node, ["./ns:RmtInf/ns:Ustrd|./ns:RtrInf/ns:AddtlInf",
                        "./ns:AddtlNtryInf", "./ns:Refs/ns:InstrId"],
             transaction, "payment_ref", join_str="\n"
         )
-        for path, key, label in [
-            ("./ns:RmtInf/ns:Ustrd", "Unstructured Reference", "RmtInf/Ustrd"),
-            ("./ns:RmtInf/ns:Strd/ns:CdtrRefInf/ns:Ref",
-             "Structured Reference", "RmtInf/Strd/CdtrRefInf/Ref"),
-            ("./ns:BkTxCd/ns:Prtry/ns:Cd",
-             "Additional Information", "BkTxCd/Prtry/Cd")
-        ]:
-            self.add_value_from_node(
-                ns, node, [path], transaction["narration"],
-                "%s (%s)" % (_(key), label), join_str=" "
-            )
-
         self.add_value_from_node(
             ns, node, ["./ns:RmtInf/ns:Strd/ns:CdtrRefInf/ns:Ref",
                        "./ns:Refs/ns:EndToEndId", "./ns:Ntry/ns:AcctSvcrRef"],
             transaction, "ref"
         )
-
         ultmtdbtr = node.xpath(
             "./ns:RltdPties/ns:UltmtDbtr", namespaces={"ns": ns}
         )
@@ -206,7 +181,6 @@ class CamtParser(models.AbstractModel):
         )
         if party_type_node and party_type_node[0].text != "CRDT":
             party_type = "Cdtr"
-
         party_node = node.xpath(
             "./ns:RltdPties/ns:%s" % party_type, namespaces={"ns": ns}
         )
@@ -224,7 +198,6 @@ class CamtParser(models.AbstractModel):
                 "./ns:PstlAdr/ns:AdrLine", transaction["narration"],
                 "%s (PstlAdr)" % _("Postal Address"), join_str=" | "
             )
-
         account_node = node.xpath(
             "./ns:RltdPties/ns:%sAcct/ns:Id" % party_type, namespaces={"ns": ns}
         )
@@ -276,19 +249,24 @@ class CamtParser(models.AbstractModel):
             result, "account_number"
         )
         self.add_value_from_node(ns, node, "./ns:Id", result, "name")
+
+        # Chemins étendus pour trouver la devise (Acct -> Bal -> Ntry)
         self.add_value_from_node(
-            ns, node, ["./ns:Acct/ns:Ccy", "./ns:Bal/ns:Amt/@Ccy"],
-            result, "currency"
+            ns, node, [
+                "./ns:Acct/ns:Ccy",
+                "./ns:Bal/ns:Amt/@Ccy",
+                "./ns:Ntry/ns:Amt/@Ccy"
+            ],
+            result,
+            "currency"
         )
+
         result["balance_start"], result["balance_end_real"] = (
             self.get_balance_amounts(ns, node)
         )
-
         transactions = []
         for entry_node in node.xpath("./ns:Ntry", namespaces={"ns": ns}):
-            # CRITICAL: EBICS and ISO modules often require a list, not a generator
             transactions.extend(list(self.parse_entry(ns, entry_node)))
-
         result["transactions"] = transactions
         result["date"] = None
         if transactions:
@@ -324,16 +302,19 @@ class CamtParser(models.AbstractModel):
                 root = None
         if root is None:
             raise ValueError("Not a valid xml file.")
-
         ns = root.tag[1:root.tag.index("}")]
         self.check_version(ns, root)
-
         statements = []
         currency = account_number = None
         for node in root[0][1:]:
             statement = self.parse_statement(ns, node)
             if statement["transactions"]:
-                currency = statement.pop("currency", currency)
-                account_number = statement.pop("account_number", account_number)
+                # Récupération sécurisée de la devise du relevé
+                st_currency = statement.pop("currency", None)
+                if st_currency:
+                    currency = st_currency
+                st_account = statement.pop("account_number", None)
+                if st_account:
+                    account_number = st_account
                 statements.append(statement)
         return currency, account_number, statements
