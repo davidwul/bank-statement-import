@@ -83,7 +83,7 @@ class CamtParser(models.AbstractModel):
         if len(details_nodes) == 0:
             # Check for foreign currency even if no TxDtls
             self.parse_amount_details_currency(ns, node, transaction)
-            transaction.pop("currency")
+            transaction.pop("currency", None)
             self.generate_narration(transaction)
             yield transaction
             return
@@ -91,13 +91,14 @@ class CamtParser(models.AbstractModel):
         transaction_base = transaction
         for det_node in details_nodes:
             transaction = transaction_base.copy()
+            transaction["narration"] = transaction_base["narration"].copy()
             self.parse_transaction_details(ns, det_node, transaction)
             # Try to discover foreign currency from the details node or parent entry node
             self.parse_amount_details_currency(ns, det_node, transaction)
             if "foreign_currency_id" not in transaction:
                 self.parse_amount_details_currency(ns, node, transaction)
 
-            transaction.pop("currency")
+            transaction.pop("currency", None)
             self.generate_narration(transaction)
             yield transaction
     def add_value_from_node(self, ns, node, xpath_str, obj, attr_name, join_str=None):
