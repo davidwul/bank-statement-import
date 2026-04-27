@@ -24,15 +24,83 @@ class CamtParser(models.AbstractModel):
             sign_node = node.xpath("../../ns:CdtDbtInd", namespaces={"ns": ns})
         if sign_node and sign_node[0].text == "DBIT":
             sign = -1
+        # Priority 1: Main amount (usually in account currency)
         amount_node = node.xpath("ns:Amt", namespaces={"ns": ns})
+        # Priority 2: Detail amount if main is missing
         if not amount_node:
-            amount_node = node.xpath(
-                "./ns:AmtDtls/ns:TxAmt/ns:Amt", namespaces={"ns": ns}
-            )
+            amount_node = node.xpath("./ns:AmtDtls/ns:TxAmt/ns:Amt",
+                                     namespaces={"ns": ns})
         if amount_node:
             amount = sign * float(amount_node[0].text)
         return amount
 
+    def parse_entry(self, ns, node):
+        """Parse an Ntry node and yield transactions"""
+        transaction = {
+            "payment_ref": "/",
+            "amount": 0,
+            "narration": {},
+            "transaction_type": {},
+        }
+        self.add_value_from_node(ns, node, "./ns:BookgDt/ns:Dt | ./ns:BookgDt/ns:DtTm",
+                                 transaction, "date")
+        self.add_value_from_node(ns, node,
+                                 ["./ns:Amt/@Ccy", "./ns:AmtDtls/ns:TxAmt/ns:Amt/@Ccy"],
+                                 transaction, "currency")
+
+        # ALWAYS parse the main amount first (for the bank account currency)
+        amount = self.parse_amount(ns, node)
+        if amount != 0.0:
+            transaction["amount"] = amount
+
+        self.add_value_from_node(ns, node,
+                                 ["./ns:NtryDtls/ns:RmtInf/ns:Strd/ns:CdtrRefInf/ns:Ref",
+                                  "./ns:NtryDtls/ns:Btch/ns:PmtInfId",
+                                  "./ns:NtryDtls/ns:TxDtls/ns:Refs/ns:AcctSvcrRef",
+                                  "./ns:AcctSvcrRef"], transaction, "ref")
+        self.add_value_from_node(ns, node, ["./ns:AddtlNtryInf"], transaction,
+                                 "payment_ref")
+        self.add_value_from_node(ns, node, "./ns:AddtlNtryInf",
+                                 transaction["narration"], "%s (AddtlNtryInf)" % _(
+                "Additional Entry Information"))
+        self.add_value_from_node(ns, node, "./ns:RvslInd", transaction["narration"],
+                                 "%s (RvslInd)" % _("Reversal Indicator"))
+        self.add_value_from_node(ns, node, "./ns:BkTxCd/ns:Domn/ns:Cd",
+                                 transaction["transaction_type"], "Code")
+        self.add_value_from_node(ns, node, "./ns:BkTxCd/ns:Domn/ns:Fmly/ns:Cd",
+                                 transaction["transaction_type"], "FmlyCd")
+        self.add_value_from_node(ns, node, "./ns:BkTxCd/ns:Domn/ns:Fmly/ns:SubFmlyCd",
+                                 transaction["transaction_type"], "SubFmlyCd")
+
+        transaction["transaction_type"] = "-".join(
+            transaction["transaction_type"].values()) or ""
+        details_nodes = node.xpath("./ns:NtryDtls/ns:TxDtls", namespaces={"ns": ns})
+        chrg_inc = node.xpath("./ns:Chrgs/ns:Rcrd/ns:ChrgInclInd",
+                              namespaces={"ns": ns})
+        if chrg_inc and chrg_inc[0].text == "true":
+            details_nodes += node.xpath("./ns:Chrgs/ns:Rcrd", namespaces={"ns": ns})
+
+        if len(details_nodes) == 0:
+            # Check for foreign currency even if no TxDtls
+            self.parse_amount_details_currency(ns, node, transaction)
+            transaction.pop("currency", None)
+            self.generate_narration(transaction)
+            yield transaction
+            return
+
+        transaction_base = transaction
+        for det_node in details_nodes:
+            transaction = transaction_base.copy()
+            transaction["narration"] = transaction_base["narration"].copy()
+            self.parse_transaction_details(ns, det_node, transaction)
+            # Try to discover foreign currency from the details node or parent entry node
+            self.parse_amount_details_currency(ns, det_node, transaction)
+            if "foreign_currency_id" not in transaction:
+                self.parse_amount_details_currency(ns, node, transaction)
+
+            transaction.pop("currency", None)
+            self.generate_narration(transaction)
+            yield transaction
     def add_value_from_node(self, ns, node, xpath_str, obj, attr_name, join_str=None):
         """Add value to object from first or all nodes found with xpath.
 
@@ -258,28 +326,38 @@ class CamtParser(models.AbstractModel):
                 )
 
     def parse_amount_details_currency(self, ns, node, transaction):
-        # search for currency information in the txdtls
         add_currency = False
-        ntry_dtls_currency = node.xpath("ns:Amt/@Ccy", namespaces={"ns": ns})
-        if ntry_dtls_currency and transaction["currency"] != ntry_dtls_currency[0]:
-            currency_amount = float(node.xpath("ns:Amt", namespaces={"ns": ns})[0].text)
-            add_currency = True
-        else:
-            ntry_dtls_currency = node.xpath(
-                "ns:AmtDtls/ns:InstdAmt/ns:Amt/@Ccy", namespaces={"ns": ns}
-            )
-            if ntry_dtls_currency and transaction["currency"] != ntry_dtls_currency[0]:
-                currency_amount = float(node.xpath(
-                    "ns:AmtDtls/ns:InstdAmt/ns:Amt", namespaces={"ns": ns}
-                )[0].text)
+        ntry_dtls_currency = None
+        currency_amount = 0.0
+        # 1. Handle cases with Target Currency and Exchange Rate (e.g., card fees)
+        trgt_ccy = node.xpath(".//ns:CcyXchg/ns:TrgtCcy", namespaces={"ns": ns})
+        if trgt_ccy and transaction.get("currency") != trgt_ccy[0].text:
+            rate = node.xpath(".//ns:CcyXchg/ns:XchgRate", namespaces={"ns": ns})
+            amt_main = node.xpath("ns:Amt", namespaces={"ns": ns})
+            if rate and amt_main:
+                ntry_dtls_currency = trgt_ccy[0].text
+                currency_amount = float(amt_main[0].text) * float(rate[0].text)
                 add_currency = True
-        if add_currency:
+        # 2. Fallback: Search for any explicit currency attribute different from the main one
+        if not add_currency:
+            ccy_nodes = node.xpath(".//ns:AmtDtls//@Ccy", namespaces={"ns": ns})
+            for ccy in ccy_nodes:
+                if ccy != transaction.get("currency"):
+                    val_node = node.xpath(f".//ns:AmtDtls//*[@Ccy='{ccy}']",
+                                          namespaces={"ns": ns})
+                    if val_node:
+                        ntry_dtls_currency = ccy
+                        currency_amount = float(val_node[0].text)
+                        add_currency = True
+                        break
+        # 3. Update Odoo transaction dictionary if a foreign currency was found
+        if add_currency and ntry_dtls_currency:
             other_currency = self.env["res.currency"].search(
-                [("name", "=", ntry_dtls_currency)], limit=1
-            )
-            transaction["amount_currency"] = currency_amount \
-                if transaction["amount"]>0 else -currency_amount
-            transaction["foreign_currency_id"] = other_currency.id
+                [("name", "=", ntry_dtls_currency)], limit=1)
+            if other_currency:
+                sign = 1 if transaction.get("amount", 0) >= 0 else -1
+                transaction["amount_currency"] = currency_amount * sign
+                transaction["foreign_currency_id"] = other_currency.id
         return add_currency
 
     def generate_narration(self, transaction):
@@ -300,111 +378,6 @@ class CamtParser(models.AbstractModel):
         transaction["narration"] = "\n".join(
             ["%s: %s" % (key, val) for key, val in transaction["narration"].items()]
         )
-
-    def parse_entry(self, ns, node):
-        """Parse an Ntry node and yield transactions"""
-        transaction = {
-            "payment_ref": "/",
-            "amount": 0,
-            "narration": {},
-            "transaction_type": {},
-        }  # fallback defaults
-        self.add_value_from_node(ns, node, "./ns:BookgDt/ns:Dt", transaction, "date")
-        self.add_value_from_node(
-            ns,
-            node,
-            [
-                "./ns:Amt/@Ccy",
-                "./ns:AmtDtls/ns:TxAmt/ns:Amt/@Ccy",
-            ],
-            transaction,
-            "currency",
-        )
-        amount = self.parse_amount(ns, node)
-
-        if amount != 0.0:
-            transaction["amount"] = amount
-
-        self.add_value_from_node(
-            ns,
-            node,
-            [
-                "./ns:NtryDtls/ns:RmtInf/ns:Strd/ns:CdtrRefInf/ns:Ref",
-                "./ns:NtryDtls/ns:Btch/ns:PmtInfId",
-                "./ns:NtryDtls/ns:TxDtls/ns:Refs/ns:AcctSvcrRef",
-                "./ns:AcctSvcrRef",
-            ],
-            transaction,
-            "ref",
-        )
-        self.add_value_from_node(
-            ns,
-            node,
-            [
-                "./ns:AddtlNtryInf",
-            ],
-            transaction,
-            "payment_ref",
-        )
-
-        # enrich the notes with some more infos when they are available
-        self.add_value_from_node(
-            ns,
-            node,
-            "./ns:AddtlNtryInf",
-            transaction["narration"],
-            "%s (AddtlNtryInf)" % _("Additional Entry Information"),
-        )
-        self.add_value_from_node(
-            ns,
-            node,
-            "./ns:RvslInd",
-            transaction["narration"],
-            "%s (RvslInd)" % _("Reversal Indicator"),
-        )
-
-        self.add_value_from_node(
-            ns,
-            node,
-            "./ns:BkTxCd/ns:Domn/ns:Cd",
-            transaction["transaction_type"],
-            "Code",
-        )
-        self.add_value_from_node(
-            ns,
-            node,
-            "./ns:BkTxCd/ns:Domn/ns:Fmly/ns:Cd",
-            transaction["transaction_type"],
-            "FmlyCd",
-        )
-        self.add_value_from_node(
-            ns,
-            node,
-            "./ns:BkTxCd/ns:Domn/ns:Fmly/ns:SubFmlyCd",
-            transaction["transaction_type"],
-            "SubFmlyCd",
-        )
-
-        transaction["transaction_type"] = (
-            "-".join(transaction["transaction_type"].values()) or ""
-        )
-
-        details_nodes = node.xpath("./ns:NtryDtls/ns:TxDtls", namespaces={"ns": ns})
-        chrg_inc = node.xpath("./ns:Chrgs/ns:Rcrd/ns:ChrgInclInd", namespaces={"ns": ns})
-        if chrg_inc and chrg_inc[0].text == "true":
-            details_nodes += node.xpath("./ns:Chrgs/ns:Rcrd", namespaces={"ns": ns})
-        if len(details_nodes) == 0:
-            transaction.pop("currency")
-            self.generate_narration(transaction)
-            yield transaction
-            return
-        transaction_base = transaction
-        for node in details_nodes:
-            transaction = transaction_base.copy()
-            self.parse_transaction_details(ns, node, transaction)
-            transaction.pop("currency")
-            self.generate_narration(transaction)
-            yield transaction
 
     def get_balance_amounts(self, ns, node):
         """Return opening and closing balance.
