@@ -2,10 +2,9 @@
 # Copyright 2013-2016 Therp BV <https://therp.nl>
 # Copyright 2017 Open Net Sàrl
 # License AGPL-3.0 or later (https://www.gnu.org/licenses/agpl.html).
+
 import re
-
 from lxml import etree
-
 from odoo import _, models
 
 
@@ -14,99 +13,149 @@ class CamtParser(models.AbstractModel):
     _description = "Account Bank Statement Import CAMT parser"
 
     def parse_amount(self, ns, node):
-        """Parse element that contains Amount and CreditDebitIndicator."""
+        """Parse Amount only from the direct child of the provided node."""
         if node is None:
             return 0.0
         sign = 1
-        amount = 0.0
         sign_node = node.xpath("ns:CdtDbtInd", namespaces={"ns": ns})
         if not sign_node:
             sign_node = node.xpath("../../ns:CdtDbtInd", namespaces={"ns": ns})
         if sign_node and sign_node[0].text == "DBIT":
             sign = -1
-        # Priority 1: Main amount (usually in account currency)
+        # Extract only direct Amt child to avoid global/batch amount confusion
         amount_node = node.xpath("ns:Amt", namespaces={"ns": ns})
-        # Priority 2: Detail amount if main is missing
-        if not amount_node:
-            amount_node = node.xpath("./ns:AmtDtls/ns:TxAmt/ns:Amt",
-                                     namespaces={"ns": ns})
         if amount_node:
-            amount = sign * float(amount_node[0].text)
-        return amount
+            return sign * float(amount_node[0].text)
+        return 0.0
+
+    def parse_amount_details_currency(self, ns, node, transaction):
+        """Discover foreign currency and handle exchange rate calculations."""
+        add_currency = False
+        ntry_dtls_currency = None
+        currency_amount = 0.0
+        # 1. Target Currency case (e.g. card fees)
+        trgt_ccy = node.xpath(
+            ".//ns:CcyXchg/ns:TrgtCcy", namespaces={"ns": ns}
+        )
+        if trgt_ccy and transaction.get("currency") != trgt_ccy[0].text:
+            rate = node.xpath(
+                ".//ns:CcyXchg/ns:XchgRate", namespaces={"ns": ns}
+            )
+            amt_main = node.xpath("ns:Amt", namespaces={"ns": ns})
+            if rate and amt_main:
+                ntry_dtls_currency = trgt_ccy[0].text
+                currency_amount = float(amt_main[0].text) * float(rate[0].text)
+                add_currency = True
+        # 2. Explicit foreign currency case (e.g. SEPA EUR)
+        if not add_currency:
+            ccy_nodes = node.xpath(".//ns:AmtDtls//@Ccy", namespaces={"ns": ns})
+            for ccy in ccy_nodes:
+                if ccy != transaction.get("currency"):
+                    val_node = node.xpath(
+                        f".//ns:AmtDtls//*[@Ccy='{ccy}']",
+                        namespaces={"ns": ns}
+                    )
+                    if val_node:
+                        ntry_dtls_currency = ccy
+                        currency_amount = float(val_node[0].text)
+                        add_currency = True
+                        break
+        # 3. Apply to transaction sign and ID
+        if add_currency and ntry_dtls_currency:
+            other_currency = self.env["res.currency"].search(
+                [("name", "=", ntry_dtls_currency)], limit=1
+            )
+            if other_currency:
+                sign = 1 if transaction.get("amount", 0) >= 0 else -1
+                transaction["amount_currency"] = currency_amount * sign
+                transaction["foreign_currency_id"] = other_currency.id
+        return add_currency
 
     def parse_entry(self, ns, node):
-        """Parse an Ntry node and yield transactions"""
-        transaction = {
+        """Parse Ntry node and yield transactions (handles single/batch)."""
+        transaction_base = {
             "payment_ref": "/",
-            "amount": 0,
+            "amount": 0.0,
             "narration": {},
             "transaction_type": {},
         }
-        self.add_value_from_node(ns, node, "./ns:BookgDt/ns:Dt | ./ns:BookgDt/ns:DtTm",
-                                 transaction, "date")
-        self.add_value_from_node(ns, node,
-                                 ["./ns:Amt/@Ccy", "./ns:AmtDtls/ns:TxAmt/ns:Amt/@Ccy"],
-                                 transaction, "currency")
+        self.add_value_from_node(
+            ns, node, "./ns:BookgDt/ns:Dt | ./ns:BookgDt/ns:DtTm",
+            transaction_base, "date"
+        )
+        self.add_value_from_node(
+            ns, node, ["./ns:Amt/@Ccy", "./ns:AmtDtls/ns:TxAmt/ns:Amt/@Ccy"],
+            transaction_base, "currency"
+        )
 
-        # ALWAYS parse the main amount first (for the bank account currency)
-        amount = self.parse_amount(ns, node)
-        if amount != 0.0:
-            transaction["amount"] = amount
+        entry_amount = self.parse_amount(ns, node)
 
-        self.add_value_from_node(ns, node,
-                                 ["./ns:NtryDtls/ns:RmtInf/ns:Strd/ns:CdtrRefInf/ns:Ref",
-                                  "./ns:NtryDtls/ns:Btch/ns:PmtInfId",
-                                  "./ns:NtryDtls/ns:TxDtls/ns:Refs/ns:AcctSvcrRef",
-                                  "./ns:AcctSvcrRef"], transaction, "ref")
-        self.add_value_from_node(ns, node, ["./ns:AddtlNtryInf"], transaction,
-                                 "payment_ref")
-        self.add_value_from_node(ns, node, "./ns:AddtlNtryInf",
-                                 transaction["narration"], "%s (AddtlNtryInf)" % _(
-                "Additional Entry Information"))
-        self.add_value_from_node(ns, node, "./ns:RvslInd", transaction["narration"],
-                                 "%s (RvslInd)" % _("Reversal Indicator"))
-        self.add_value_from_node(ns, node, "./ns:BkTxCd/ns:Domn/ns:Cd",
-                                 transaction["transaction_type"], "Code")
-        self.add_value_from_node(ns, node, "./ns:BkTxCd/ns:Domn/ns:Fmly/ns:Cd",
-                                 transaction["transaction_type"], "FmlyCd")
-        self.add_value_from_node(ns, node, "./ns:BkTxCd/ns:Domn/ns:Fmly/ns:SubFmlyCd",
-                                 transaction["transaction_type"], "SubFmlyCd")
+        self.add_value_from_node(
+            ns, node,
+            ["./ns:NtryDtls/ns:RmtInf/ns:Strd/ns:CdtrRefInf/ns:Ref",
+             "./ns:NtryDtls/ns:Btch/ns:PmtInfId",
+             "./ns:NtryDtls/ns:TxDtls/ns:Refs/ns:AcctSvcrRef",
+             "./ns:AcctSvcrRef"], transaction_base, "ref"
+        )
+        self.add_value_from_node(
+            ns, node, ["./ns:AddtlNtryInf"], transaction_base, "payment_ref"
+        )
+        self.add_value_from_node(
+            ns, node, "./ns:AddtlNtryInf", transaction_base["narration"],
+            "%s (AddtlNtryInf)" % _("Additional Entry Information")
+        )
+        self.add_value_from_node(
+            ns, node, "./ns:RvslInd", transaction_base["narration"],
+            "%s (RvslInd)" % _("Reversal Indicator")
+        )
 
-        transaction["transaction_type"] = "-".join(
-            transaction["transaction_type"].values()) or ""
-        details_nodes = node.xpath("./ns:NtryDtls/ns:TxDtls", namespaces={"ns": ns})
-        chrg_inc = node.xpath("./ns:Chrgs/ns:Rcrd/ns:ChrgInclInd",
-                              namespaces={"ns": ns})
+        for code_path, key in [("./ns:BkTxCd/ns:Domn/ns:Cd", "Code"),
+                               ("./ns:BkTxCd/ns:Domn/ns:Fmly/ns:Cd", "FmlyCd"),
+                               ("./ns:BkTxCd/ns:Domn/ns:Fmly/ns:SubFmlyCd",
+                                "SubFmlyCd")]:
+            self.add_value_from_node(
+                ns, node, code_path, transaction_base["transaction_type"], key
+            )
+        transaction_base["transaction_type"] = "-".join(
+            transaction_base["transaction_type"].values()
+        ) or ""
+
+        details_nodes = node.xpath(
+            "./ns:NtryDtls/ns:TxDtls", namespaces={"ns": ns}
+        )
+        chrg_inc = node.xpath(
+            "./ns:Chrgs/ns:Rcrd/ns:ChrgInclInd", namespaces={"ns": ns}
+        )
         if chrg_inc and chrg_inc[0].text == "true":
-            details_nodes += node.xpath("./ns:Chrgs/ns:Rcrd", namespaces={"ns": ns})
+            details_nodes += node.xpath(
+                "./ns:Chrgs/ns:Rcrd", namespaces={"ns": ns}
+            )
 
-        if len(details_nodes) == 0:
-            # Check for foreign currency even if no TxDtls
+        if not details_nodes:
+            transaction = transaction_base.copy()
+            transaction["amount"] = entry_amount
             self.parse_amount_details_currency(ns, node, transaction)
             transaction.pop("currency", None)
             self.generate_narration(transaction)
             yield transaction
             return
 
-        transaction_base = transaction
         for det_node in details_nodes:
             transaction = transaction_base.copy()
             transaction["narration"] = transaction_base["narration"].copy()
+            detail_amount = self.parse_amount(ns, det_node)
+            transaction["amount"] = (
+                detail_amount if detail_amount != 0.0 else entry_amount
+            )
             self.parse_transaction_details(ns, det_node, transaction)
-            # Try to discover foreign currency from the details node or parent entry node
-            self.parse_amount_details_currency(ns, det_node, transaction)
-            if "foreign_currency_id" not in transaction:
+            if not self.parse_amount_details_currency(ns, det_node,
+                                                      transaction):
                 self.parse_amount_details_currency(ns, node, transaction)
-
             transaction.pop("currency", None)
             self.generate_narration(transaction)
             yield transaction
-    def add_value_from_node(self, ns, node, xpath_str, obj, attr_name, join_str=None):
-        """Add value to object from first or all nodes found with xpath.
 
-        If xpath_str is a list (or iterable), it will be seen as a series
-        of search path's in order of preference. The first item that results
-        in a found node will be used to set a value."""
+    def add_value_from_node(self, ns, node, xpath_str, obj, attr, join_str=None):
         if not isinstance(xpath_str, (list, tuple)):
             xpath_str = [xpath_str]
         for search_str in xpath_str:
@@ -117,329 +166,129 @@ class CamtParser(models.AbstractModel):
                 elif join_str is None:
                     attr_value = found_node[0].text
                 else:
-                    attr_value = join_str.join([x.text for x in found_node])
-                obj[attr_name] = attr_value
+                    attr_value = join_str.join(
+                        [x.text for x in found_node if x.text]
+                    )
+                obj[attr] = attr_value
                 break
 
     def parse_transaction_details(self, ns, node, transaction):
         """Parse TxDtls node."""
-        # message
         self.add_value_from_node(
-            ns,
-            node,
-            [
-                "./ns:RmtInf/ns:Ustrd|./ns:RtrInf/ns:AddtlInf",
-                "./ns:AddtlNtryInf",
-                "./ns:Refs/ns:InstrId",
-            ],
-            transaction,
-            "payment_ref",
-            join_str="\n",
+            ns, node, ["./ns:RmtInf/ns:Ustrd|./ns:RtrInf/ns:AddtlInf",
+                       "./ns:AddtlNtryInf", "./ns:Refs/ns:InstrId"],
+            transaction, "payment_ref", join_str="\n"
         )
+        for path, key, label in [
+            ("./ns:RmtInf/ns:Ustrd", "Unstructured Reference", "RmtInf/Ustrd"),
+            ("./ns:RmtInf/ns:Strd/ns:CdtrRefInf/ns:Ref",
+             "Structured Reference", "RmtInf/Strd/CdtrRefInf/Ref"),
+            ("./ns:BkTxCd/ns:Prtry/ns:Cd",
+             "Additional Information", "BkTxCd/Prtry/Cd")
+        ]:
+            self.add_value_from_node(
+                ns, node, [path], transaction["narration"],
+                "%s (%s)" % (_(key), label), join_str=" "
+            )
 
         self.add_value_from_node(
-            ns,
-            node,
-            ["./ns:RmtInf/ns:Ustrd"],
-            transaction["narration"],
-            "%s (RmtInf/Ustrd)" % _("Unstructured Reference"),
-            join_str=" ",
-        )
-        self.add_value_from_node(
-            ns,
-            node,
-            ["./ns:RmtInf/ns:Strd/ns:CdtrRefInf/ns:Ref"],
-            transaction["narration"],
-            "%s (RmtInf/Strd/CdtrRefInf/Ref)" % _("Structured Reference"),
-            join_str=" ",
-        )
-        self.add_value_from_node(
-            ns,
-            node,
-            ["./ns:BkTxCd/ns:Prtry/ns:Cd"],
-            transaction["narration"],
-            "%s (BkTxCd/Prtry/Cd)" % _("Additional Information"),
-            join_str=" ",
-        )
-        self.add_value_from_node(
-            ns,
-            node,
-            ["./ns:AddtlTxInf"],
-            transaction["narration"],
-            "%s (AddtlTxInf)" % _("Additional Transaction Information"),
-            join_str=" ",
-        )
-        self.add_value_from_node(
-            ns,
-            node,
-            ["./ns:RtrInf/ns:Rsn/ns:Cd"],
-            transaction["narration"],
-            "%s (RtrInf/Rsn/Cd)" % _("Return Reason Code"),
-        )
-        self.add_value_from_node(
-            ns,
-            node,
-            ["./ns:RtrInf/ns:Rsn/ns:Cd"],
-            transaction["narration"],
-            "%s (RtrInf/Rsn/Prtry)" % _("Return Reason Code (Proprietary)"),
-        )
-        self.add_value_from_node(
-            ns,
-            node,
-            ["./ns:RtrInf/ns:AddtlInf"],
-            transaction["narration"],
-            "%s (RtrInf/AddtlInf)" % _("Return Reason Additional Information"),
-            join_str=" ",
-        )
-        self.add_value_from_node(
-            ns,
-            node,
-            ["./ns:Refs/ns:MsgId"],
-            transaction["narration"],
-            "%s (Refs/MsgId)" % _("Msg Id"),
-        )
-        self.add_value_from_node(
-            ns,
-            node,
-            ["./ns:Refs/ns:AcctSvcrRef"],
-            transaction["narration"],
-            "%s (Refs/AcctSvcrRef)" % _("Account Servicer Reference"),
-        )
-        self.add_value_from_node(
-            ns,
-            node,
-            ["./ns:Refs/ns:EndToEndId"],
-            transaction["narration"],
-            "%s (Refs/EndToEndId)" % _("End To End Id"),
-        )
-        self.add_value_from_node(
-            ns,
-            node,
-            ["./ns:Refs/ns:InstrId"],
-            transaction["narration"],
-            "%s (Refs/InstrId)" % _("Instructed Id"),
-        )
-        self.add_value_from_node(
-            ns,
-            node,
-            ["./ns:Refs/ns:TxId"],
-            transaction["narration"],
-            "%s (Refs/TxId)" % _("Transaction Identification"),
-        )
-        self.add_value_from_node(
-            ns,
-            node,
-            ["./ns:Refs/ns:MntId"],
-            transaction["narration"],
-            "%s (Refs/MntId)" % _("Mandate Id"),
-        )
-        self.add_value_from_node(
-            ns,
-            node,
-            ["./ns:Refs/ns:ChqNb"],
-            transaction["narration"],
-            "%s (Refs/ChqNb)" % _("Cheque Number"),
+            ns, node, ["./ns:RmtInf/ns:Strd/ns:CdtrRefInf/ns:Ref",
+                       "./ns:Refs/ns:EndToEndId", "./ns:Ntry/ns:AcctSvcrRef"],
+            transaction, "ref"
         )
 
-        self.add_value_from_node(
-            ns, node, ["./ns:AddtlTxInf"], transaction, "payment_ref", join_str="\n"
+        ultmtdbtr = node.xpath(
+            "./ns:RltdPties/ns:UltmtDbtr", namespaces={"ns": ns}
         )
-        # eref
-        self.add_value_from_node(
-            ns,
-            node,
-            [
-                "./ns:RmtInf/ns:Strd/ns:CdtrRefInf/ns:Ref",
-                "./ns:Refs/ns:EndToEndId",
-                "./ns:Ntry/ns:AcctSvcrRef",
-            ],
-            transaction,
-            "ref",
+        party_type = "UltmtDbtr" if ultmtdbtr else "Dbtr"
+        party_type_node = node.xpath(
+            "../../ns:CdtDbtInd", namespaces={"ns": ns}
         )
-        # check if there are currency details
-        if  not self.parse_amount_details_currency(ns, node, transaction):
-            amount = self.parse_amount(ns, node)
-            if amount != 0.0:
-                transaction["amount"] = amount
-        # remote party values
-        ultmtdbtr = node.xpath("./ns:RltdPties/ns:UltmtDbtr", namespaces={"ns": ns})
-        if ultmtdbtr:
-            party_type = "UltmtDbtr"
-        else:
-            party_type = "Dbtr"
-        party_type_node = node.xpath("../../ns:CdtDbtInd", namespaces={"ns": ns})
         if party_type_node and party_type_node[0].text != "CRDT":
             party_type = "Cdtr"
+
         party_node = node.xpath(
             "./ns:RltdPties/ns:%s" % party_type, namespaces={"ns": ns}
         )
         if party_node:
             name_node = node.xpath(
-                "./ns:RltdPties/ns:{pt}/ns:Nm | ./ns:RltdPties/ns:{pt}/ns:Pty/ns:Nm".format(
-                    pt=party_type
-                ),
-                namespaces={"ns": ns},
+                "./ns:RltdPties/ns:{pt}/ns:Nm | "
+                "./ns:RltdPties/ns:{pt}/ns:Pty/ns:Nm".format(pt=party_type),
+                namespaces={"ns": ns}
             )
             if name_node:
                 transaction["partner_name"] = name_node[0].text
-            else:
-                self.add_value_from_node(
-                    ns,
-                    party_node[0],
-                    "./ns:PstlAdr/ns:AdrLine",
-                    transaction,
-                    "partner_name",
-                )
             self.add_value_from_node(
-                ns,
-                party_node[0],
-                "./ns:PstlAdr/ns:StrtNm|"
-                "./ns:PstlAdr/ns:BldgNb|"
-                "./ns:PstlAdr/ns:BldgNm|"
-                "./ns:PstlAdr/ns:PstBx|"
-                "./ns:PstlAdr/ns:PstCd|"
-                "./ns:PstlAdr/ns:TwnNm|"
-                "./ns:PstlAdr/ns:TwnLctnNm|"
-                "./ns:PstlAdr/ns:DstrctNm|"
-                "./ns:PstlAdr/ns:CtrySubDvsn|"
-                "./ns:PstlAdr/ns:Ctry|"
-                "./ns:PstlAdr/ns:AdrLine",
-                transaction["narration"],
-                "%s (PstlAdr)" % _("Postal Address"),
-                join_str=" | ",
+                ns, party_node[0],
+                "./ns:PstlAdr/ns:StrtNm|./ns:PstlAdr/ns:Ctry|"
+                "./ns:PstlAdr/ns:AdrLine", transaction["narration"],
+                "%s (PstlAdr)" % _("Postal Address"), join_str=" | "
             )
-        # Get remote_account from iban or from domestic account:
+
         account_node = node.xpath(
             "./ns:RltdPties/ns:%sAcct/ns:Id" % party_type, namespaces={"ns": ns}
         )
         if account_node:
-            iban_node = account_node[0].xpath("./ns:IBAN", namespaces={"ns": ns})
+            iban_node = account_node[0].xpath(
+                "./ns:IBAN", namespaces={"ns": ns}
+            )
             if iban_node:
                 transaction["account_number"] = iban_node[0].text
             else:
                 self.add_value_from_node(
-                    ns,
-                    account_node[0],
-                    "./ns:Othr/ns:Id",
-                    transaction,
-                    "account_number",
+                    ns, account_node[0], "./ns:Othr/ns:Id",
+                    transaction, "account_number"
                 )
 
-    def parse_amount_details_currency(self, ns, node, transaction):
-        add_currency = False
-        ntry_dtls_currency = None
-        currency_amount = 0.0
-        # 1. Handle cases with Target Currency and Exchange Rate (e.g., card fees)
-        trgt_ccy = node.xpath(".//ns:CcyXchg/ns:TrgtCcy", namespaces={"ns": ns})
-        if trgt_ccy and transaction.get("currency") != trgt_ccy[0].text:
-            rate = node.xpath(".//ns:CcyXchg/ns:XchgRate", namespaces={"ns": ns})
-            amt_main = node.xpath("ns:Amt", namespaces={"ns": ns})
-            if rate and amt_main:
-                ntry_dtls_currency = trgt_ccy[0].text
-                currency_amount = float(amt_main[0].text) * float(rate[0].text)
-                add_currency = True
-        # 2. Fallback: Search for any explicit currency attribute different from the main one
-        if not add_currency:
-            ccy_nodes = node.xpath(".//ns:AmtDtls//@Ccy", namespaces={"ns": ns})
-            for ccy in ccy_nodes:
-                if ccy != transaction.get("currency"):
-                    val_node = node.xpath(f".//ns:AmtDtls//*[@Ccy='{ccy}']",
-                                          namespaces={"ns": ns})
-                    if val_node:
-                        ntry_dtls_currency = ccy
-                        currency_amount = float(val_node[0].text)
-                        add_currency = True
-                        break
-        # 3. Update Odoo transaction dictionary if a foreign currency was found
-        if add_currency and ntry_dtls_currency:
-            other_currency = self.env["res.currency"].search(
-                [("name", "=", ntry_dtls_currency)], limit=1)
-            if other_currency:
-                sign = 1 if transaction.get("amount", 0) >= 0 else -1
-                transaction["amount_currency"] = currency_amount * sign
-                transaction["foreign_currency_id"] = other_currency.id
-        return add_currency
-
     def generate_narration(self, transaction):
-        # this block ensure compatibility with v13
         transaction["narration"] = {
-            "%s (RltdPties/Nm)"
-            % _("Partner Name"): transaction.get("partner_name", ""),
-            "%s (RltdPties/Acct)"
-            % _("Partner Account Number"): transaction.get("account_number", ""),
-            "%s (BookgDt)" % _("Transaction Date"): transaction.get("date", ""),
+            _("Partner Name"): transaction.get("partner_name", ""),
             _("Reference"): transaction.get("ref", ""),
-            _("Communication"): transaction.get("name", ""),
-            "%s (BkTxCd)"
-            % _("Transaction Type"): transaction.get("transaction_type", ""),
+            _("Communication"): transaction.get("payment_ref", ""),
             **transaction["narration"],
         }
-
         transaction["narration"] = "\n".join(
-            ["%s: %s" % (key, val) for key, val in transaction["narration"].items()]
+            ["%s: %s" % (k, v) for k, v in transaction["narration"].items() if v]
         )
 
     def get_balance_amounts(self, ns, node):
-        """Return opening and closing balance.
-
-        Depending on kind of balance and statement, the balance might be in a
-        different kind of node:
-        OPBD = OpeningBalance
-        PRCD = PreviousClosingBalance
-        ITBD = InterimBalance (first ITBD is start-, second is end-balance)
-        CLBD = ClosingBalance
-        """
-        start_balance_node = None
-        end_balance_node = None
-        for node_name in ["OPBD", "PRCD", "CLBD", "ITBD"]:
-            code_expr = (
-                './ns:Bal/ns:Tp/ns:CdOrPrtry/ns:Cd[text()="%s"]/../../..' % node_name
+        start_bal = end_bal = 0.0
+        for code in ["OPBD", "PRCD", "CLBD", "ITBD"]:
+            expr = (
+                './ns:Bal/ns:Tp/ns:CdOrPrtry/ns:Cd[text()="%s"]/../../..' % code
             )
-            balance_node = node.xpath(code_expr, namespaces={"ns": ns})
-            if balance_node:
-                if node_name in ["OPBD", "PRCD"]:
-                    start_balance_node = balance_node[0]
-                elif node_name == "CLBD":
-                    end_balance_node = balance_node[0]
+            bal_node = node.xpath(expr, namespaces={"ns": ns})
+            if bal_node:
+                if code in ["OPBD", "PRCD"]:
+                    start_bal = self.parse_amount(ns, bal_node[0])
+                elif code == "CLBD":
+                    end_bal = self.parse_amount(ns, bal_node[0])
                 else:
-                    if not start_balance_node:
-                        start_balance_node = balance_node[0]
-                    if not end_balance_node:
-                        end_balance_node = balance_node[-1]
-        return (
-            self.parse_amount(ns, start_balance_node),
-            self.parse_amount(ns, end_balance_node),
-        )
+                    if not start_bal:
+                        start_bal = self.parse_amount(ns, bal_node[0])
+                    end_bal = self.parse_amount(ns, bal_node[-1])
+        return start_bal, end_bal
 
     def parse_statement(self, ns, node):
-        """Parse a single Stmt node."""
         result = {}
         self.add_value_from_node(
-            ns,
-            node,
-            ["./ns:Acct/ns:Id/ns:IBAN", "./ns:Acct/ns:Id/ns:Othr/ns:Id"],
-            result,
-            "account_number",
+            ns, node, ["./ns:Acct/ns:Id/ns:IBAN", "./ns:Acct/ns:Id/ns:Othr/ns:Id"],
+            result, "account_number"
         )
         self.add_value_from_node(ns, node, "./ns:Id", result, "name")
         self.add_value_from_node(
-            ns,
-            node,
-            [
-                "./ns:Acct/ns:Ccy",
-                "./ns:Bal/ns:Amt/@Ccy",
-                "./ns:Ntry/ns:Amt/@Ccy",
-            ],
-            result,
-            "currency",
+            ns, node, ["./ns:Acct/ns:Ccy", "./ns:Bal/ns:Amt/@Ccy"],
+            result, "currency"
         )
-        result["balance_start"], result["balance_end_real"] = self.get_balance_amounts(
-            ns, node
+        result["balance_start"], result["balance_end_real"] = (
+            self.get_balance_amounts(ns, node)
         )
-        entry_nodes = node.xpath("./ns:Ntry", namespaces={"ns": ns})
+
         transactions = []
-        for entry_node in entry_nodes:
-            transactions.extend(self.parse_entry(ns, entry_node))
+        for entry_node in node.xpath("./ns:Ntry", namespaces={"ns": ns}):
+            # CRITICAL: EBICS and ISO modules often require a list, not a generator
+            transactions.extend(list(self.parse_entry(ns, entry_node)))
+
         result["transactions"] = transactions
         result["date"] = None
         if transactions:
@@ -449,50 +298,42 @@ class CamtParser(models.AbstractModel):
         return result
 
     def check_version(self, ns, root):
-        """Validate validity of camt file."""
-        # Check whether it is camt at all:
-        re_camt = re.compile(r"(^urn:iso:std:iso:20022:tech:xsd:camt." r"|^ISO:camt.)")
+        re_camt = re.compile(
+            r"(^urn:iso:std:iso:20022:tech:xsd:camt\.|^ISO:camt\.)"
+        )
         if not re_camt.search(ns):
             raise ValueError("no camt: " + ns)
-        # Check whether version 052 ,053 or 054:
         re_camt_version = re.compile(
-            r"(^urn:iso:std:iso:20022:tech:xsd:camt.054."
-            r"|^urn:iso:std:iso:20022:tech:xsd:camt.053."
-            r"|^urn:iso:std:iso:20022:tech:xsd:camt.052."
-            r"|^ISO:camt.054."
-            r"|^ISO:camt.053."
-            r"|^ISO:camt.052.)"
+            r"(^urn:iso:std:iso:20022:tech:xsd:camt\.05[2-4]\.|^ISO:camt\.05[2-4]\.)"
         )
         if not re_camt_version.search(ns):
-            raise ValueError("no camt 052 or 053 or 054: " + ns)
-        # Check GrpHdr element:
-        root_0_0 = root[0][0].tag[len(ns) + 2 :]  # strip namespace
+            raise ValueError("no camt 052, 053 or 054: " + ns)
+        root_0_0 = root[0][0].tag[len(ns) + 2:]
         if root_0_0 != "GrpHdr":
             raise ValueError("expected GrpHdr, got: " + root_0_0)
 
     def parse(self, data):
-        """Parse a camt.052 or camt.053 or camt.054 file."""
         try:
             root = etree.fromstring(data, parser=etree.XMLParser(recover=True))
         except etree.XMLSyntaxError:
             try:
-                # ABNAmro is known to mix up encodings
-                root = etree.fromstring(data.decode("iso-8859-15").encode("utf-8"))
+                root = etree.fromstring(
+                    data.decode("iso-8859-15").encode("utf-8")
+                )
             except etree.XMLSyntaxError:
                 root = None
         if root is None:
-            raise ValueError("Not a valid xml file, or not an xml file at all.")
-        ns = root.tag[1 : root.tag.index("}")]
+            raise ValueError("Not a valid xml file.")
+
+        ns = root.tag[1:root.tag.index("}")]
         self.check_version(ns, root)
+
         statements = []
-        currency = None
-        account_number = None
+        currency = account_number = None
         for node in root[0][1:]:
             statement = self.parse_statement(ns, node)
-            if len(statement["transactions"]):
-                if "currency" in statement:
-                    currency = statement.pop("currency")
-                if "account_number" in statement:
-                    account_number = statement.pop("account_number")
+            if statement["transactions"]:
+                currency = statement.pop("currency", currency)
+                account_number = statement.pop("account_number", account_number)
                 statements.append(statement)
         return currency, account_number, statements
