@@ -4,7 +4,9 @@
 # License AGPL-3.0 or later (https://www.gnu.org/licenses/agpl.html).
 
 import re
+
 from lxml import etree
+
 from odoo import _, models
 
 
@@ -38,15 +40,16 @@ class CamtParser(models.AbstractModel):
             amt_main = node.xpath("ns:Amt", namespaces={"ns": ns})
             if rate and amt_main:
                 ntry_dtls_currency = trgt_ccy[0].text
-                currency_amount = float(amt_main[0].text or 0.0) * float(rate[0].text or 0.0)
+                currency_amount = float(amt_main[0].text or 0.0) * float(
+                    rate[0].text or 0.0
+                )
                 add_currency = True
         if not add_currency:
             ccy_nodes = node.xpath(".//ns:AmtDtls//@Ccy", namespaces={"ns": ns})
             for ccy in ccy_nodes:
                 if ccy != transaction.get("currency"):
                     val_node = node.xpath(
-                        f".//ns:AmtDtls//*[@Ccy='{ccy}']",
-                        namespaces={"ns": ns}
+                        f".//ns:AmtDtls//*[@Ccy='{ccy}']", namespaces={"ns": ns}
                     )
                     if val_node:
                         ntry_dtls_currency = ccy
@@ -72,53 +75,68 @@ class CamtParser(models.AbstractModel):
             "transaction_type": {},
         }
         self.add_value_from_node(
-            ns, node, "./ns:BookgDt/ns:Dt | ./ns:BookgDt/ns:DtTm",
-            transaction_base, "date"
+            ns,
+            node,
+            "./ns:BookgDt/ns:Dt | ./ns:BookgDt/ns:DtTm",
+            transaction_base,
+            "date",
         )
         self.add_value_from_node(
-            ns, node, ["./ns:Amt/@Ccy", "./ns:AmtDtls/ns:TxAmt/ns:Amt/@Ccy"],
-            transaction_base, "currency"
+            ns,
+            node,
+            ["./ns:Amt/@Ccy", "./ns:AmtDtls/ns:TxAmt/ns:Amt/@Ccy"],
+            transaction_base,
+            "currency",
         )
         entry_amount = self.parse_amount(ns, node)
         self.add_value_from_node(
-            ns, node,
-            ["./ns:NtryDtls/ns:RmtInf/ns:Strd/ns:CdtrRefInf/ns:Ref",
-             "./ns:NtryDtls/ns:Btch/ns:PmtInfId",
-             "./ns:NtryDtls/ns:TxDtls/ns:Refs/ns:AcctSvcrRef",
-             "./ns:AcctSvcrRef"], transaction_base, "ref"
+            ns,
+            node,
+            [
+                "./ns:NtryDtls/ns:RmtInf/ns:Strd/ns:CdtrRefInf/ns:Ref",
+                "./ns:NtryDtls/ns:Btch/ns:PmtInfId",
+                "./ns:NtryDtls/ns:TxDtls/ns:Refs/ns:AcctSvcrRef",
+                "./ns:AcctSvcrRef",
+            ],
+            transaction_base,
+            "ref",
         )
         self.add_value_from_node(
             ns, node, ["./ns:AddtlNtryInf"], transaction_base, "payment_ref"
         )
         self.add_value_from_node(
-            ns, node, "./ns:AddtlNtryInf", transaction_base["narration"],
-            "%s (AddtlNtryInf)" % _("Additional Entry Information")
+            ns,
+            node,
+            "./ns:AddtlNtryInf",
+            transaction_base["narration"],
+            "%s (AddtlNtryInf)" % _("Additional Entry Information"),
         )
         self.add_value_from_node(
-            ns, node, "./ns:RvslInd", transaction_base["narration"],
-            "%s (RvslInd)" % _("Reversal Indicator")
+            ns,
+            node,
+            "./ns:RvslInd",
+            transaction_base["narration"],
+            "%s (RvslInd)" % _("Reversal Indicator"),
         )
-        for code_path, key in [("./ns:BkTxCd/ns:Domn/ns:Cd", "Code"),
-                               ("./ns:BkTxCd/ns:Domn/ns:Fmly/ns:Cd", "FmlyCd"),
-                               ("./ns:BkTxCd/ns:Domn/ns:Fmly/ns:SubFmlyCd",
-                                "SubFmlyCd")]:
+        for code_path, key in [
+            ("./ns:BkTxCd/ns:Domn/ns:Cd", "Code"),
+            ("./ns:BkTxCd/ns:Domn/ns:Fmly/ns:Cd", "FmlyCd"),
+            ("./ns:BkTxCd/ns:Domn/ns:Fmly/ns:SubFmlyCd", "SubFmlyCd"),
+        ]:
             self.add_value_from_node(
                 ns, node, code_path, transaction_base["transaction_type"], key
             )
-        transaction_base["transaction_type"] = "-".join(
-            [v for v in transaction_base["transaction_type"].values() if v]
-        ) or ""
-
-        details_nodes = node.xpath(
-            "./ns:NtryDtls/ns:TxDtls", namespaces={"ns": ns}
+        transaction_base["transaction_type"] = (
+            "-".join([v for v in transaction_base["transaction_type"].values() if v])
+            or ""
         )
+
+        details_nodes = node.xpath("./ns:NtryDtls/ns:TxDtls", namespaces={"ns": ns})
         chrg_inc = node.xpath(
             "./ns:Chrgs/ns:Rcrd/ns:ChrgInclInd", namespaces={"ns": ns}
         )
         if chrg_inc and chrg_inc[0].text == "true":
-            details_nodes += node.xpath(
-                "./ns:Chrgs/ns:Rcrd", namespaces={"ns": ns}
-            )
+            details_nodes += node.xpath("./ns:Chrgs/ns:Rcrd", namespaces={"ns": ns})
 
         if not details_nodes:
             transaction = transaction_base.copy()
@@ -137,8 +155,7 @@ class CamtParser(models.AbstractModel):
             if transaction["amount"] == 0.0 and len(details_nodes) == 1:
                 transaction["amount"] = entry_amount
             self.parse_transaction_details(ns, det_node, transaction)
-            if not self.parse_amount_details_currency(ns, det_node,
-                                                      transaction):
+            if not self.parse_amount_details_currency(ns, det_node, transaction):
                 self.parse_amount_details_currency(ns, node, transaction)
             transaction.pop("currency", None)
             self.generate_narration(transaction)
@@ -155,30 +172,37 @@ class CamtParser(models.AbstractModel):
                 elif join_str is None:
                     attr_value = found_node[0].text
                 else:
-                    attr_value = join_str.join(
-                        [x.text for x in found_node if x.text]
-                    )
+                    attr_value = join_str.join([x.text for x in found_node if x.text])
                 obj[attr] = attr_value
                 break
 
     def parse_transaction_details(self, ns, node, transaction):
         self.add_value_from_node(
-            ns, node, ["./ns:RmtInf/ns:Ustrd|./ns:RtrInf/ns:AddtlInf",
-                       "./ns:AddtlNtryInf", "./ns:Refs/ns:InstrId"],
-            transaction, "payment_ref", join_str="\n"
+            ns,
+            node,
+            [
+                "./ns:RmtInf/ns:Ustrd|./ns:RtrInf/ns:AddtlInf",
+                "./ns:AddtlNtryInf",
+                "./ns:Refs/ns:InstrId",
+            ],
+            transaction,
+            "payment_ref",
+            join_str="\n",
         )
         self.add_value_from_node(
-            ns, node, ["./ns:RmtInf/ns:Strd/ns:CdtrRefInf/ns:Ref",
-                       "./ns:Refs/ns:EndToEndId", "./ns:Ntry/ns:AcctSvcrRef"],
-            transaction, "ref"
+            ns,
+            node,
+            [
+                "./ns:RmtInf/ns:Strd/ns:CdtrRefInf/ns:Ref",
+                "./ns:Refs/ns:EndToEndId",
+                "./ns:Ntry/ns:AcctSvcrRef",
+            ],
+            transaction,
+            "ref",
         )
-        ultmtdbtr = node.xpath(
-            "./ns:RltdPties/ns:UltmtDbtr", namespaces={"ns": ns}
-        )
+        ultmtdbtr = node.xpath("./ns:RltdPties/ns:UltmtDbtr", namespaces={"ns": ns})
         party_type = "UltmtDbtr" if ultmtdbtr else "Dbtr"
-        party_type_node = node.xpath(
-            "../../ns:CdtDbtInd", namespaces={"ns": ns}
-        )
+        party_type_node = node.xpath("../../ns:CdtDbtInd", namespaces={"ns": ns})
         if party_type_node and party_type_node[0].text != "CRDT":
             party_type = "Cdtr"
         party_node = node.xpath(
@@ -188,29 +212,33 @@ class CamtParser(models.AbstractModel):
             name_node = node.xpath(
                 "./ns:RltdPties/ns:{pt}/ns:Nm | "
                 "./ns:RltdPties/ns:{pt}/ns:Pty/ns:Nm".format(pt=party_type),
-                namespaces={"ns": ns}
+                namespaces={"ns": ns},
             )
             if name_node:
                 transaction["partner_name"] = name_node[0].text
             self.add_value_from_node(
-                ns, party_node[0],
+                ns,
+                party_node[0],
                 "./ns:PstlAdr/ns:StrtNm|./ns:PstlAdr/ns:Ctry|"
-                "./ns:PstlAdr/ns:AdrLine", transaction["narration"],
-                "%s (PstlAdr)" % _("Postal Address"), join_str=" | "
+                "./ns:PstlAdr/ns:AdrLine",
+                transaction["narration"],
+                "%s (PstlAdr)" % _("Postal Address"),
+                join_str=" | ",
             )
         account_node = node.xpath(
             "./ns:RltdPties/ns:%sAcct/ns:Id" % party_type, namespaces={"ns": ns}
         )
         if account_node:
-            iban_node = account_node[0].xpath(
-                "./ns:IBAN", namespaces={"ns": ns}
-            )
+            iban_node = account_node[0].xpath("./ns:IBAN", namespaces={"ns": ns})
             if iban_node:
                 transaction["account_number"] = iban_node[0].text
             else:
                 self.add_value_from_node(
-                    ns, account_node[0], "./ns:Othr/ns:Id",
-                    transaction, "account_number"
+                    ns,
+                    account_node[0],
+                    "./ns:Othr/ns:Id",
+                    transaction,
+                    "account_number",
                 )
 
     def generate_narration(self, transaction):
@@ -227,9 +255,7 @@ class CamtParser(models.AbstractModel):
     def get_balance_amounts(self, ns, node):
         start_bal = end_bal = 0.0
         for code in ["OPBD", "PRCD", "CLBD", "ITBD"]:
-            expr = (
-                './ns:Bal/ns:Tp/ns:CdOrPrtry/ns:Cd[text()="%s"]/../../..' % code
-            )
+            expr = './ns:Bal/ns:Tp/ns:CdOrPrtry/ns:Cd[text()="%s"]/../../..' % code
             bal_node = node.xpath(expr, namespaces={"ns": ns})
             if bal_node:
                 if code in ["OPBD", "PRCD"]:
@@ -245,24 +271,25 @@ class CamtParser(models.AbstractModel):
     def parse_statement(self, ns, node):
         result = {}
         self.add_value_from_node(
-            ns, node, ["./ns:Acct/ns:Id/ns:IBAN", "./ns:Acct/ns:Id/ns:Othr/ns:Id"],
-            result, "account_number"
+            ns,
+            node,
+            ["./ns:Acct/ns:Id/ns:IBAN", "./ns:Acct/ns:Id/ns:Othr/ns:Id"],
+            result,
+            "account_number",
         )
         self.add_value_from_node(ns, node, "./ns:Id", result, "name")
 
         # Chemins étendus pour trouver la devise (Acct -> Bal -> Ntry)
         self.add_value_from_node(
-            ns, node, [
-                "./ns:Acct/ns:Ccy",
-                "./ns:Bal/ns:Amt/@Ccy",
-                "./ns:Ntry/ns:Amt/@Ccy"
-            ],
+            ns,
+            node,
+            ["./ns:Acct/ns:Ccy", "./ns:Bal/ns:Amt/@Ccy", "./ns:Ntry/ns:Amt/@Ccy"],
             result,
-            "currency"
+            "currency",
         )
 
-        result["balance_start"], result["balance_end_real"] = (
-            self.get_balance_amounts(ns, node)
+        result["balance_start"], result["balance_end_real"] = self.get_balance_amounts(
+            ns, node
         )
         transactions = []
         for entry_node in node.xpath("./ns:Ntry", namespaces={"ns": ns}):
@@ -276,9 +303,7 @@ class CamtParser(models.AbstractModel):
         return result
 
     def check_version(self, ns, root):
-        re_camt = re.compile(
-            r"(^urn:iso:std:iso:20022:tech:xsd:camt\.|^ISO:camt\.)"
-        )
+        re_camt = re.compile(r"(^urn:iso:std:iso:20022:tech:xsd:camt\.|^ISO:camt\.)")
         if not re_camt.search(ns):
             raise ValueError("no camt: " + ns)
         re_camt_version = re.compile(
@@ -286,7 +311,7 @@ class CamtParser(models.AbstractModel):
         )
         if not re_camt_version.search(ns):
             raise ValueError("no camt 052, 053 or 054: " + ns)
-        root_0_0 = root[0][0].tag[len(ns) + 2:]
+        root_0_0 = root[0][0].tag[len(ns) + 2 :]
         if root_0_0 != "GrpHdr":
             raise ValueError("expected GrpHdr, got: " + root_0_0)
 
@@ -295,14 +320,12 @@ class CamtParser(models.AbstractModel):
             root = etree.fromstring(data, parser=etree.XMLParser(recover=True))
         except etree.XMLSyntaxError:
             try:
-                root = etree.fromstring(
-                    data.decode("iso-8859-15").encode("utf-8")
-                )
+                root = etree.fromstring(data.decode("iso-8859-15").encode("utf-8"))
             except etree.XMLSyntaxError:
                 root = None
         if root is None:
             raise ValueError("Not a valid xml file.")
-        ns = root.tag[1:root.tag.index("}")] if "}" in root.tag else ""
+        ns = root.tag[1 : root.tag.index("}")] if "}" in root.tag else ""
         self.check_version(ns, root)
         statements = []
         currency = account_number = None
