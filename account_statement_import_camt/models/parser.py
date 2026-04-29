@@ -167,6 +167,13 @@ class CamtParser(models.AbstractModel):
                        "./ns:AddtlNtryInf", "./ns:Refs/ns:InstrId"],
             transaction, "payment_ref", join_str="\n"
         )
+        # capture ALL multi-line unstructured info
+        self.add_value_from_node(
+            ns, node, ["./ns:RmtInf/ns:Ustrd"],
+            transaction["narration"],
+            _("Details"),
+            join_str=" / "
+        )
         self.add_value_from_node(
             ns, node, ["./ns:RmtInf/ns:Strd/ns:CdtrRefInf/ns:Ref",
                        "./ns:Refs/ns:EndToEndId", "./ns:Ntry/ns:AcctSvcrRef"],
@@ -214,15 +221,22 @@ class CamtParser(models.AbstractModel):
                 )
 
     def generate_narration(self, transaction):
-        transaction["narration"] = {
+        """Build the final narration string including fees and communications."""
+        # We start with the base information
+        narr_parts = {
             _("Partner Name"): transaction.get("partner_name", ""),
             _("Reference"): transaction.get("ref", ""),
             _("Communication"): transaction.get("payment_ref", ""),
-            **transaction["narration"],
         }
-        transaction["narration"] = "\n".join(
-            ["%s: %s" % (k, v) for k, v in transaction["narration"].items() if v]
-        )
+        res = []
+        for title, value in narr_parts.items():
+            if value:
+                res.append("%s: %s" % (title, value))
+        for title, value in transaction.get("narration", {}).items():
+            if value and value not in narr_parts.values():
+                res.append("%s: %s" % (title, value))
+
+        transaction["narration"] = "\n".join(res)
 
     def get_balance_amounts(self, ns, node):
         start_bal = end_bal = 0.0
