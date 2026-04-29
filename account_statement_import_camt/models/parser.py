@@ -24,7 +24,7 @@ class CamtParser(models.AbstractModel):
             sign = -1
         amount_node = node.xpath("ns:Amt", namespaces={"ns": ns})
         if amount_node:
-            return sign * float(amount_node[0].text)
+            return sign * float(amount_node[0].text or 0.0)
         return 0.0
 
     def parse_amount_details_currency(self, ns, node, transaction):
@@ -38,7 +38,7 @@ class CamtParser(models.AbstractModel):
             amt_main = node.xpath("ns:Amt", namespaces={"ns": ns})
             if rate and amt_main:
                 ntry_dtls_currency = trgt_ccy[0].text
-                currency_amount = float(amt_main[0].text) * float(rate[0].text)
+                currency_amount = float(amt_main[0].text or 0.0) * float(rate[0].text or 0.0)
                 add_currency = True
         if not add_currency:
             ccy_nodes = node.xpath(".//ns:AmtDtls//@Ccy", namespaces={"ns": ns})
@@ -50,7 +50,7 @@ class CamtParser(models.AbstractModel):
                     )
                     if val_node:
                         ntry_dtls_currency = ccy
-                        currency_amount = float(val_node[0].text)
+                        currency_amount = float(val_node[0].text or 0.0)
                         add_currency = True
                         break
         if add_currency and ntry_dtls_currency:
@@ -106,7 +106,7 @@ class CamtParser(models.AbstractModel):
                 ns, node, code_path, transaction_base["transaction_type"], key
             )
         transaction_base["transaction_type"] = "-".join(
-            transaction_base["transaction_type"].values()
+            [v for v in transaction_base["transaction_type"].values() if v]
         ) or ""
 
         details_nodes = node.xpath(
@@ -133,9 +133,9 @@ class CamtParser(models.AbstractModel):
             transaction = transaction_base.copy()
             transaction["narration"] = transaction_base["narration"].copy()
             detail_amount = self.parse_amount(ns, det_node)
-            transaction["amount"] = (
-                detail_amount if detail_amount != 0.0 else entry_amount
-            )
+            transaction["amount"] = detail_amount
+            if transaction["amount"] == 0.0 and len(details_nodes) == 1:
+                transaction["amount"] = entry_amount
             self.parse_transaction_details(ns, det_node, transaction)
             if not self.parse_amount_details_currency(ns, det_node,
                                                       transaction):
@@ -302,7 +302,7 @@ class CamtParser(models.AbstractModel):
                 root = None
         if root is None:
             raise ValueError("Not a valid xml file.")
-        ns = root.tag[1:root.tag.index("}")]
+        ns = root.tag[1:root.tag.index("}")] if "}" in root.tag else ""
         self.check_version(ns, root)
         statements = []
         currency = account_number = None
