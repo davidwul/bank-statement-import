@@ -415,7 +415,13 @@ class AccountStatementImportCamtParser(models.AbstractModel):
             "-".join(transaction["transaction_type"].values()) or ""
         )
 
-        details_nodes = node.xpath("./ns:NtryDtls/ns:TxDtls", namespaces={"ns": ns})
+        tx_details_nodes = node.xpath("./ns:NtryDtls/ns:TxDtls", namespaces={"ns": ns})
+        details_nodes = list(tx_details_nodes)
+        details_nodes.extend(
+            node.xpath(
+                "./ns:Chrgs/ns:Rcrd[ns:ChrgInclInd='true']", namespaces={"ns": ns}
+            )
+        )
         if len(details_nodes) == 0:
             self.parse_amount_details_currency(ns, node, transaction)
             transaction.pop("currency", None)
