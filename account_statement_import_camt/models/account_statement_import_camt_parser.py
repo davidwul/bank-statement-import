@@ -129,7 +129,8 @@ class AccountStatementImportCamtParser(models.AbstractModel):
             ns,
             node,
             [
-                "./ns:RmtInf/ns:Ustrd|./ns:RtrInf/ns:AddtlInf",
+                "./ns:RmtInf/ns:Ustrd"
+                "./ns:RtrInf/ns:AddtlInf",
                 "./ns:AddtlNtryInf",
                 "./ns:Refs/ns:InstrId",
             ],
@@ -233,6 +234,14 @@ class AccountStatementImportCamtParser(models.AbstractModel):
             transaction["narration"],
             f"{_('Cheque Number')} (Refs/ChqNb)",
         )
+        self.add_value_from_node(
+            ns,
+            node,
+            ["./ns:RmtInf/ns:Strd/ns:RfrdDocInf/ns:Nb"],
+            transaction["narration"],
+            f"{_('Referred Document Number')} (RmtInf/Strd/RfrdDocInf/Nb)",
+            join_str=" ",
+        )
 
         self.add_value_from_node(
             ns, node, ["./ns:AddtlTxInf"], transaction, "payment_ref", join_str="\n"
@@ -282,6 +291,12 @@ class AccountStatementImportCamtParser(models.AbstractModel):
                     transaction,
                     "partner_name",
                 )
+            # --- Structured address detection SIX ---
+            has_adrline = bool(node.xpath("./ns:RltdPties//ns:PstlAdr/ns:AdrLine",
+                                          namespaces={"ns": ns}))
+            transaction["narration"][
+                "Address_Type"] = "Unstructured (Legacy)" if has_adrline else "Structured"
+
             self.add_value_from_node(
                 ns,
                 party_node[0],
@@ -423,6 +438,14 @@ class AccountStatementImportCamtParser(models.AbstractModel):
                 "./ns:Chrgs/ns:Rcrd[ns:ChrgInclInd='true']", namespaces={"ns": ns}
             )
         )
+        # --- fees extraction ---
+        tx_details_nodes = node.xpath("./ns:NtryDtls/ns:TxDtls", namespaces={"ns": ns})
+        charge_nodes = node.xpath("./ns:Chrgs/ns:Rcrd[ns:ChrgInclInd='true']",
+                                  namespaces={"ns": ns})
+        details_nodes = list(tx_details_nodes)
+        details_nodes.extend(charge_nodes)
+        total_charges = sum(self.parse_amount(ns, chg) for chg in charge_nodes)
+
         if len(details_nodes) == 0:
             self.parse_amount_details_currency(ns, node, transaction)
             transaction.pop("currency", None)
@@ -433,18 +456,23 @@ class AccountStatementImportCamtParser(models.AbstractModel):
             yield transaction
             return
         transaction_base = transaction
-        for node in details_nodes:
+        for det_node in details_nodes:
             transaction = transaction_base.copy()
             transaction["narration"] = transaction_base["narration"].copy()
-            detail_amount = self.parse_amount(ns, node)
+            detail_amount = self.parse_amount(ns, det_node)
             if detail_amount != 0.0:
                 transaction["amount"] = detail_amount
-            elif len(details_nodes) == 1 and node.tag.endswith("TxDtls"):
+            elif len(details_nodes) == 1 and det_node.tag.endswith("TxDtls"):
                 transaction["amount"] = amount
-            self.parse_transaction_details(ns, node, transaction)
-            if not self.parse_amount_details_currency(ns, node, transaction):
+            if det_node.tag.endswith("TxDtls"):
+                transaction["amount"] -= total_charges
+                total_charges = 0.0  # fees is applied only once
+            elif det_node.tag.endswith("Rcrd"):
+                transaction["payment_ref"] = "Bank Fees"
+            self.parse_transaction_details(ns, det_node, transaction)
+            if not self.parse_amount_details_currency(ns, det_node, transaction):
                 self.parse_amount_details_currency(
-                    ns, node.getparent().getparent(), transaction
+                    ns, det_node.getparent().getparent(), transaction
                 )
             transaction.pop("currency", None)
             self.generate_narration(transaction)
