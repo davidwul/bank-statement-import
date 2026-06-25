@@ -129,7 +129,7 @@ class AccountStatementImportCamtParser(models.AbstractModel):
             ns,
             node,
             [
-                "./ns:RmtInf/ns:Ustrd"
+                "./ns:RmtInf/ns:Ustrd",
                 "./ns:RtrInf/ns:AddtlInf",
                 "./ns:AddtlNtryInf",
                 "./ns:Refs/ns:InstrId",
